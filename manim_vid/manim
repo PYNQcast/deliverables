@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REAL_MANIM="$REPO_ROOT/.venv/bin/manim"
+LOCAL_BIN="$REPO_ROOT/manim_vid/bin"
+
+if [ ! -x "$REAL_MANIM" ]; then
+  echo "Missing $REAL_MANIM" >&2
+  echo "Install the Manim dependencies first. See manim_vid/depend.md" >&2
+  exit 1
+fi
+
+# Ensure Manim can find a local xdg-open fallback on minimal systems.
+export PATH="$LOCAL_BIN:$PATH"
+
+exec "$REAL_MANIM" "$@"

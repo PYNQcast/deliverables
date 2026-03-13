@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+target="${1:-}"
+
+if [ -z "$target" ]; then
+  exit 0
+fi
+
+if command -v /usr/bin/xdg-open >/dev/null 2>&1; then
+  exec /usr/bin/xdg-open "$@"
+fi
+
+if command -v open >/dev/null 2>&1; then
+  exec open "$@"
+fi
+
+if command -v python3 >/dev/null 2>&1; then
+  python3 -m webbrowser "$target" >/dev/null 2>&1 || true
+fi
+
+exit 0
