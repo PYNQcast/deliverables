@@ -1,0 +1,4 @@
+.venv/
+manim_vid/__pycache__/
+media/texts/
+media/videos/initial/1080p60/partial_movie_files/

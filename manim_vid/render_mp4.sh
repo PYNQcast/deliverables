@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENV_PY="$REPO_ROOT/.venv/bin/python"
-VENV_MANIM="$REPO_ROOT/manim_vid/manim"
+VENV_MANIM="$REPO_ROOT/.venv/bin/manim"
 QUALITY="${QUALITY:-qh}"
 OPEN_AFTER_RENDER="${OPEN_AFTER_RENDER:-0}"
 
