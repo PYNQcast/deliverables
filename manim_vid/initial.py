@@ -268,310 +268,271 @@ class DDAScene(Scene):
     def construct(self):
         self.camera.background_color = BACKGROUND
 
-        section = Text("2. Casting Rays — DDA Algorithm", font_size=42, color=PYNQ_RED, weight=BOLD)
-        section.to_edge(UP, buff=0.4)
+        section = Text("2. Casting Rays — DDA Algorithm", font_size=42,
+                       color=PYNQ_RED, weight=BOLD)
+        section.to_edge(UP, buff=0.35)
         self.play(Write(section), run_time=0.8)
 
+        # ── Shared grid setup ─────────────────────────────────────────────
         world_map = ALGO_WORLD_MAP
         map_rows  = len(world_map)
         map_cols  = len(world_map[0])
         cell_size = 0.55
-        grid_group = make_world_grid(world_map, cell_size=cell_size, empty_opacity=0.42)
-        grid_group.shift(LEFT * 2.2 + DOWN * 0.3)
 
-        self.play(FadeIn(grid_group, lag_ratio=0.005), run_time=0.8)
+        # ══════════════════════════════════════════════════════════════════
+        # PART A — The problem: fixed-step ray marching can miss walls
+        # ══════════════════════════════════════════════════════════════════
+        part_a_lbl = Text("Problem: fixed-step ray marching", font_size=28,
+                          color=TEXT_PRIMARY, weight=BOLD)
+        part_a_lbl.next_to(section, DOWN, buff=0.30)
+        self.play(FadeIn(part_a_lbl, shift=UP * 0.15), run_time=0.5)
 
-        player_world = grid_cell_center(grid_group, 5, 2, map_cols)
-        player_dot   = Dot(player_world, radius=0.11, color=PLAYER_A_COLOR, z_index=5)
-        self.play(FadeIn(player_dot, scale=0.5), run_time=0.5)
+        grid_a = make_world_grid(world_map, cell_size=cell_size,
+                                 empty_opacity=0.42)
+        grid_a.move_to(ORIGIN + DOWN * 0.5)
+        self.play(FadeIn(grid_a, lag_ratio=0.005), run_time=0.6)
 
-        fov_angle  = 60
-        player_dir = 30
-        fov_half   = fov_angle / 2
-        ray_length = 3.5
+        player_pos = grid_cell_center(grid_a, 5, 2, map_cols)
+        player_dot = Dot(player_pos, radius=0.11, color=PLAYER_A_COLOR,
+                         z_index=5)
+        self.play(FadeIn(player_dot, scale=0.5), run_time=0.4)
 
-        dir_rad       = np.radians(player_dir)
-        fov_left_rad  = np.radians(player_dir + fov_half)
-        fov_right_rad = np.radians(player_dir - fov_half)
+        # Pick a ray angle that threads through a narrow gap between two
+        # wall cells — aiming between (2,2)/(2,3) wall block and (3,5) wall
+        # so that with large step size the samples skip right over the wall.
+        ray_angle_deg = 38
+        ray_angle_rad = np.radians(ray_angle_deg)
+        ray_dir = np.array([np.cos(ray_angle_rad),
+                            np.sin(ray_angle_rad), 0])
 
-        fov_left_end  = player_world + ray_length * np.array([np.cos(fov_left_rad),  np.sin(fov_left_rad),  0])
-        fov_right_end = player_world + ray_length * np.array([np.cos(fov_right_rad), np.sin(fov_right_rad), 0])
-
-        fov_left_line  = DashedLine(player_world, fov_left_end,  color=FOV_COLOR, dash_length=0.1, stroke_width=2)
-        fov_right_line = DashedLine(player_world, fov_right_end, color=FOV_COLOR, dash_length=0.1, stroke_width=2)
-        fov_label = Text("60° FOV", font_size=22, color=FOV_COLOR)
-        fov_label.move_to(player_world + 1.6 * np.array([np.cos(dir_rad), np.sin(dir_rad), 0]) + UP * 0.22)
-
-        self.play(Create(fov_left_line), Create(fov_right_line), FadeIn(fov_label), run_time=1)
-
-        # Right-side explanation panel
-        dda_steps = VGroup(
-            Text("DDA steps per ray:",   font_size=24, color=TEXT_PRIMARY, weight=BOLD),
-            Text("1. For each screen column,",         font_size=21, color=TEXT_MUTED),
-            Text("   cast a ray from the player",      font_size=21, color=TEXT_MUTED),
-            Text("2. Step through grid cells",         font_size=21, color=TEXT_MUTED),
-            Text("   one boundary at a time",          font_size=21, color=TEXT_MUTED),
-            Text("3. Stop when a wall is hit",         font_size=21, color=TEXT_MUTED),
-            Text("4. Use perpendicular distance",      font_size=21, color=TEXT_MUTED),
-            Text("   to prevent fisheye distortion",   font_size=21, color=TEXT_MUTED),
-        ).arrange(DOWN, aligned_edge=LEFT, buff=0.2)
-        dda_steps.to_edge(RIGHT, buff=0.45).shift(DOWN * 0.2)
-        self.play(FadeIn(dda_steps, lag_ratio=0.08), run_time=1.8)
-
-        # Cast rays
-        num_rays   = 7
-        ray_angles = np.linspace(player_dir + fov_half, player_dir - fov_half, num_rays)
-        ray_draws  = VGroup()
-        hit_draws  = VGroup()
-
-        for index, angle_deg in enumerate(ray_angles):
-            angle_rad = np.radians(angle_deg)
-            ray_dir   = np.array([np.cos(angle_rad), np.sin(angle_rad), 0])
-            hit_pos   = None
-
-            for step in range(1, 220):
-                pos = player_world + ray_dir * 0.05 * step
-                row, col = point_to_grid_cell(pos, grid_group, map_rows, map_cols, cell_size)
-                if 0 <= row < map_rows and 0 <= col < map_cols:
-                    if world_map[row][col] == 1:
-                        hit_pos = pos
-                        break
-                else:
-                    hit_pos = pos
+        # Compute the actual hit point (fine stepping)
+        true_hit = None
+        for s in range(1, 400):
+            pos = player_pos + ray_dir * 0.02 * s
+            r, c = point_to_grid_cell(pos, grid_a, map_rows, map_cols,
+                                      cell_size)
+            if 0 <= r < map_rows and 0 <= c < map_cols:
+                if world_map[r][c] == 1:
+                    true_hit = pos
                     break
-
-            if hit_pos is None:
-                continue
-
-            is_centre = (index == 3)
-            ray_line = Line(
-                player_world, hit_pos,
-                color=PYNQ_RED if is_centre else RAY_COLOR,
-                stroke_width=3.0 if is_centre else 1.8,
-                stroke_opacity=1.0 if is_centre else 0.55,
-            )
-            hit_dot = Dot(hit_pos, radius=0.07, color=HIT_COLOR, z_index=5)
-            ray_draws.add(ray_line)
-            hit_draws.add(hit_dot)
-
-            if is_centre:
-                self.play(Create(ray_line), run_time=0.6)
-                self.play(FadeIn(hit_dot, scale=0.5), run_time=0.3)
             else:
-                self.play(Create(ray_line), FadeIn(hit_dot, scale=0.5), run_time=0.22)
+                break
 
-        self.wait(2.2)
-        self.play(FadeOut(VGroup(
-            section, grid_group, player_dot,
-            fov_left_line, fov_right_line, fov_label,
-            dda_steps, ray_draws, hit_draws,
-        )), run_time=0.8)
+        # Draw the full ray line (faint) to show where it goes
+        ray_end = player_pos + ray_dir * 4.5
+        ray_line_faint = Line(player_pos, ray_end, stroke_color=RAY_COLOR,
+                              stroke_width=1.5, stroke_opacity=0.3)
+        self.play(Create(ray_line_faint), run_time=0.4)
+
+        # ── Fixed-step samples with LARGE step — some miss the wall ───────
+        large_step = 0.38
+        sample_dots = VGroup()
+        missed_wall = False
+        wall_passed = False
+        for i in range(1, 14):
+            pos = player_pos + ray_dir * large_step * i
+            r, c = point_to_grid_cell(pos, grid_a, map_rows, map_cols,
+                                      cell_size)
+            in_wall = (0 <= r < map_rows and 0 <= c < map_cols
+                       and world_map[r][c] == 1)
+            # Check if any fine-step between previous and this would be wall
+            if not in_wall and not wall_passed:
+                for sub in range(1, 20):
+                    subpos = player_pos + ray_dir * (large_step * (i - 1)
+                             + large_step * sub / 20)
+                    sr, sc = point_to_grid_cell(subpos, grid_a, map_rows,
+                                                map_cols, cell_size)
+                    if (0 <= sr < map_rows and 0 <= sc < map_cols
+                            and world_map[sr][sc] == 1):
+                        wall_passed = True
+                        missed_wall = True
+                        break
+
+            dot = Dot(pos, radius=0.07,
+                      color=ACCENT_ALERT if in_wall else RAY_COLOR,
+                      z_index=6)
+            sample_dots.add(dot)
+
+        self.play(LaggedStart(
+            *[FadeIn(d, scale=0.5) for d in sample_dots],
+            lag_ratio=0.08,
+        ), run_time=1.2)
+
+        # "MISSED" label
+        miss_lbl = Text("MISSED!", font_size=32, color=ACCENT_ALERT,
+                         weight=BOLD)
+        miss_lbl.next_to(grid_a, RIGHT, buff=0.5).shift(UP * 0.3)
+        miss_desc = Text("Step size too large — ray\npassed through the wall",
+                         font_size=18, color=TEXT_MUTED, line_spacing=0.9)
+        miss_desc.next_to(miss_lbl, DOWN, buff=0.15)
+
+        self.play(FadeIn(miss_lbl, scale=1.3), FadeIn(miss_desc),
+                  run_time=0.6)
+        self.wait(1.8)
+
+        # Clean up Part A
+        part_a_all = VGroup(part_a_lbl, grid_a, player_dot,
+                            ray_line_faint, sample_dots,
+                            miss_lbl, miss_desc)
+        self.play(FadeOut(part_a_all), run_time=0.6)
+
+        # ══════════════════════════════════════════════════════════════════
+        # PART B — The solution: DDA steps at grid boundaries
+        # ══════════════════════════════════════════════════════════════════
+        part_b_lbl = Text("Solution: DDA — step at every grid boundary",
+                          font_size=28, color=TEXT_PRIMARY, weight=BOLD)
+        part_b_lbl.next_to(section, DOWN, buff=0.30)
+        self.play(FadeIn(part_b_lbl, shift=UP * 0.15), run_time=0.5)
+
+        grid_b = make_world_grid(world_map, cell_size=cell_size,
+                                 empty_opacity=0.42)
+        grid_b.move_to(LEFT * 2.2 + DOWN * 0.5)
+        self.play(FadeIn(grid_b, lag_ratio=0.005), run_time=0.6)
+
+        player_pos_b = grid_cell_center(grid_b, 5, 2, map_cols)
+        player_dot_b = Dot(player_pos_b, radius=0.11,
+                           color=PLAYER_A_COLOR, z_index=5)
+        self.play(FadeIn(player_dot_b, scale=0.5), run_time=0.4)
+
+        # ── DDA stepping: find each grid boundary crossing ────────────────
+        # We simulate DDA: from the player cell, step through x-side and
+        # y-side crossings until we hit a wall.
+        px, py = player_pos_b[0], player_pos_b[1]
+        grid_center = grid_b.get_center()
+        # Convert scene coords to grid float coords
+        gx = (px - grid_center[0]) / cell_size + map_cols / 2
+        gy = -(py - grid_center[1]) / cell_size + map_rows / 2
+
+        dx = ray_dir[0]
+        dy = -ray_dir[1]  # flip because grid y is inverted
+
+        map_x, map_y = int(gx), int(gy)
+        delta_dist_x = abs(1 / dx) if dx != 0 else 1e10
+        delta_dist_y = abs(1 / dy) if dy != 0 else 1e10
+
+        if dx < 0:
+            step_x = -1
+            side_dist_x = (gx - map_x) * delta_dist_x
+        else:
+            step_x = 1
+            side_dist_x = (map_x + 1.0 - gx) * delta_dist_x
+        if dy < 0:
+            step_y = -1
+            side_dist_y = (gy - map_y) * delta_dist_y
+        else:
+            step_y = 1
+            side_dist_y = (map_y + 1.0 - gy) * delta_dist_y
+
+        # Collect DDA step positions (scene coords of each boundary hit)
+        dda_points = [player_pos_b.copy()]
+        dda_hit = None
+        for _ in range(60):
+            if side_dist_x < side_dist_y:
+                t = side_dist_x
+                side_dist_x += delta_dist_x
+                map_x += step_x
+            else:
+                t = side_dist_y
+                side_dist_y += delta_dist_y
+                map_y += step_y
+
+            # Convert back to scene coords
+            scene_x = grid_center[0] + (gx + dx * t - map_cols / 2) * cell_size
+            scene_y = grid_center[1] - (gy + dy * t - map_rows / 2) * cell_size
+            pt = np.array([scene_x, scene_y, 0])
+            dda_points.append(pt)
+
+            if 0 <= map_y < map_rows and 0 <= map_x < map_cols:
+                if world_map[map_y][map_x] == 1:
+                    dda_hit = pt
+                    break
+            else:
+                break
+
+        # ── Draw DDA steps one at a time ──────────────────────────────────
+        dda_lines = VGroup()
+        dda_dots = VGroup()
+        for i in range(1, len(dda_points)):
+            seg = Line(dda_points[i - 1], dda_points[i],
+                       stroke_color=RAY_COLOR, stroke_width=2.5,
+                       z_index=4)
+            dot = Dot(dda_points[i], radius=0.06, color=HIT_COLOR,
+                      z_index=6)
+            dda_lines.add(seg)
+            dda_dots.add(dot)
+            self.play(Create(seg), FadeIn(dot, scale=0.5),
+                      run_time=0.12)
+
+        # Highlight final hit
+        if dda_hit is not None:
+            hit_flash = Dot(dda_hit, radius=0.12, color=HIT_COLOR,
+                            z_index=8)
+            hit_lbl = Text("HIT", font_size=28, color=HIT_COLOR,
+                           weight=BOLD)
+            hit_lbl.next_to(hit_flash, UP + RIGHT, buff=0.12)
+            self.play(FadeIn(hit_flash, scale=1.5), FadeIn(hit_lbl),
+                      run_time=0.4)
+        self.wait(0.8)
+
+        # ── Right-side explanation ────────────────────────────────────────
+        dda_explain = VGroup(
+            Text("DDA steps per ray:", font_size=24,
+                 color=TEXT_PRIMARY, weight=BOLD),
+            Text("1. Compute distance to next", font_size=20,
+                 color=TEXT_MUTED),
+            Text("   x-side and y-side", font_size=20, color=TEXT_MUTED),
+            Text("2. Advance to the closer one", font_size=20,
+                 color=TEXT_MUTED),
+            Text("3. Check: is this cell a wall?", font_size=20,
+                 color=TEXT_MUTED),
+            Text("4. If not, repeat from step 1", font_size=20,
+                 color=TEXT_MUTED),
+            Text("5. If yes, record the hit", font_size=20,
+                 color=HIT_COLOR),
+        ).arrange(DOWN, aligned_edge=LEFT, buff=0.18)
+        dda_explain.to_edge(RIGHT, buff=0.4).shift(DOWN * 0.3)
+        self.play(FadeIn(dda_explain, lag_ratio=0.06), run_time=1.2)
+        self.wait(1.5)
+
+        # ── FPGA callout — why DDA is perfect for hardware ────────────────
+        fpga_box_bg = RoundedRectangle(
+            corner_radius=0.12, width=12.0, height=1.3,
+            fill_color=PANEL_FILL, fill_opacity=0.96,
+            stroke_color=ACCENT_HARDWARE, stroke_width=1.8,
+        ).to_edge(DOWN, buff=0.15)
+        fpga_txt = VGroup(
+            Text("Why DDA maps perfectly to FPGA:", font_size=20,
+                 color=ACCENT_HARDWARE, weight=BOLD),
+            Text("Only additions and comparisons — no multiply/divide."
+                 "  Each ray is independent — trivially parallelisable.",
+                 font_size=17, color=TEXT_MUTED),
+        ).arrange(DOWN, buff=0.06, aligned_edge=LEFT)
+        fpga_txt.move_to(fpga_box_bg)
+        self.play(FadeIn(VGroup(fpga_box_bg, fpga_txt)), run_time=0.5)
+        self.wait(2.5)
+
+        # ── Fade out ──────────────────────────────────────────────────────
+        fade_grp = VGroup(
+            section, part_b_lbl,
+            grid_b, player_dot_b,
+            dda_lines, dda_dots,
+            dda_explain, fpga_box_bg, fpga_txt,
+        )
+        if dda_hit is not None:
+            fade_grp.add(hit_flash, hit_lbl)
+        self.play(FadeOut(fade_grp), run_time=0.8)
 
 
 class WallRenderScene(Scene):
     def construct(self):
         self.camera.background_color = BACKGROUND
- 
+
         section = Text("3. Distance  →  Wall Height", font_size=40,
                        color=PYNQ_RED, weight=BOLD)
         section.to_edge(UP, buff=0.35)
         self.play(Write(section), run_time=0.8)
- 
-        # ==================================================================
-        # LAYOUT
-        # ==================================================================
-        # Divider and headers — defined now, shown in Phase 2 only
-        divider = DashedLine([0.5, -3.8, 0], [0.5, 3.2, 0],
-                            stroke_color="#1A3050", stroke_width=1.5,
-                            dash_length=0.15)
-        lhdr = Text("Top-Down View", font_size=21,
-                    color=TEXT_MUTED).move_to([-3.0, 2.85, 0])
-        rhdr = Text("Screen Output", font_size=21,
-                    color=TEXT_MUTED).move_to([4.2, 2.85, 0])
- 
-        # ==================================================================
-        # PHASE 1 — Lodev perpWallDist diagram  (left half, x ∈ [-7, 0.5])
-        # ==================================================================
- 
-        # ── Grid ──────────────────────────────────────────────────────────
-        grid_rows, grid_cols = 8, 9
-        cs = 0.62
-        grid_ox = -2.8   # centered on screen
-        grid_oy = 2.45   # top  edge of grid
- 
-        def g2s(r, c):
-            """Grid cell (row, col) → scene centre."""
-            return np.array([grid_ox + (c + 0.5) * cs,
-                             grid_oy - (r + 0.5) * cs, 0])
- 
-        # Wall cells: top row, columns 2-4 and 6-7
-        wall_map = [[0]*grid_cols for _ in range(grid_rows)]
-        for c in [2, 3, 4, 5, 6, 7]:
-            wall_map[0][c] = 1
- 
-        grid_group = VGroup()
-        for r in range(grid_rows):
-            for c in range(grid_cols):
-                sq = Square(side_length=cs, stroke_width=0.7,
-                            stroke_color=LODEV_GRID, stroke_opacity=0.30)
-                if wall_map[r][c]:
-                    sq.set_fill(LODEV_WALL_BLUE, opacity=0.80)
-                else:
-                    sq.set_fill(EMPTY_COLOR, opacity=0.10)
-                sq.move_to(g2s(r, c))
-                grid_group.add(sq)
-        self.play(FadeIn(grid_group, lag_ratio=0.002), run_time=0.6)
- 
-        # ── Geometry ──────────────────────────────────────────────────────
-        P = g2s(6, 1) + np.array([0.05, 0.1, 0])
- 
-        dir_angle = np.radians(68)
-        dir_vec = np.array([np.cos(dir_angle), np.sin(dir_angle), 0])
-        plane_vec = np.array([dir_vec[1], -dir_vec[0], 0]) * 0.66
- 
-        cam_x = 0.30
-        ray_dir = dir_vec + plane_vec * cam_x
-        ray_dir_u = ray_dir / np.linalg.norm(ray_dir)
- 
-        vs = 1.5   # visual scale for component arrows
- 
-        D = P + ray_dir * vs
-        dir_tip = P + dir_vec * vs
-        C = P + np.array([ray_dir[0] * vs, 0, 0])
- 
-        cpc = P + dir_vec * vs          # camera plane centre
-        cp_half = plane_vec * 2.8
-        cp_start = cpc - cp_half
-        cp_end   = cpc + cp_half
- 
-        wall_y = grid_oy - cs           # bottom edge of row 0
-        t_hit = (wall_y - P[1]) / ray_dir[1]
-        H = P + t_hit * ray_dir
- 
-        B = np.array([H[0], P[1], 0])   # vertical foot
- 
-        pvu = plane_vec / np.linalg.norm(plane_vec)
-        s_proj = np.dot(H - cpc, pvu)
-        A = cpc + s_proj * pvu
- 
-        # ==================================================================
-        # Draw with careful label placement (no single-letter point labels)
-        # ==================================================================
- 
-        # ── Camera plane ──────────────────────────────────────────────────
-        cam_plane_line = Line(cp_start, cp_end,
-                              stroke_color=TEXT_PRIMARY, stroke_width=4,
-                              stroke_opacity=0.80)
-        cam_lbl = backed_label("camera plane", font_size=15,
-                               color=TEXT_MUTED, slant=ITALIC)
-        cp_label_pos = cp_start * 0.85 + cp_end * 0.15
-        cam_lbl.move_to(cp_label_pos).shift(DOWN * 0.3)
-        self.play(Create(cam_plane_line), FadeIn(cam_lbl), run_time=0.6)
- 
-        # ── Player dot ────────────────────────────────────────────────────
-        player_dot = Dot(P, radius=0.15, color=LODEV_RED, z_index=10)
-        self.play(FadeIn(player_dot), run_time=0.4)
- 
-        # ── dir arrow ─────────────────────────────────────────────────────
-        dir_arrow = Arrow(P, dir_tip, buff=0, stroke_width=3.5,
-                          color=LODEV_GREEN,
-                          max_tip_length_to_length_ratio=0.10)
-        dir_perp = np.array([-dir_vec[1], dir_vec[0], 0])
-        dlbl = backed_label("dir", font_size=17, color=LODEV_GREEN,
-                            weight=BOLD, slant=ITALIC)
-        dlbl.move_to((P + dir_tip) / 2 + dir_perp * 0.32)
-        self.play(GrowArrow(dir_arrow), FadeIn(dlbl), run_time=0.6)
- 
-        # ── rayDir arrow ──────────────────────────────────────────────────
-        ray_arrow = Arrow(P, D, buff=0, stroke_width=3,
-                          color=LODEV_RED,
-                          max_tip_length_to_length_ratio=0.10)
-        ray_perp = np.array([-ray_dir_u[1], ray_dir_u[0], 0])
-        rdlbl = backed_label("rayDir", font_size=15, color=LODEV_RED,
-                             weight=BOLD, slant=ITALIC)
-        rdlbl.move_to((P + D) / 2 - ray_perp * 0.32)
-        self.play(GrowArrow(ray_arrow), FadeIn(rdlbl), run_time=0.6)
- 
-        # ── rayDirX: P → C ───────────────────────────────────────────────
-        arr_rdx = Arrow(P, C, buff=0, stroke_width=3, color=LODEV_GREEN,
-                        max_tip_length_to_length_ratio=0.14)
-        rdx_lbl = backed_label("rayDirX", font_size=15, color=LODEV_GREEN,
-                               weight=BOLD)
-        rdx_lbl.next_to(arr_rdx, DOWN, buff=0.06)
-        self.play(GrowArrow(arr_rdx), FadeIn(rdx_lbl), run_time=0.5)
- 
-        # ── rayDirY: C → D ───────────────────────────────────────────────
-        arr_rdy = Arrow(C, D, buff=0, stroke_width=3, color=LODEV_GREEN,
-                        max_tip_length_to_length_ratio=0.14)
-        rdy_lbl = backed_label("rayDirY", font_size=15, color=LODEV_GREEN,
-                               weight=BOLD)
-        rdy_lbl.next_to(arr_rdy, RIGHT, buff=0.06)
-        ra_C = right_angle_mark(C, [0, 1, 0], [-1, 0, 0],
-                                size=0.10, color=LODEV_RED)
-        self.play(GrowArrow(arr_rdy), FadeIn(rdy_lbl), Create(ra_C),
-                  run_time=0.5)
-        self.wait(0.3)
- 
-        # ── Full ray P → H ───────────────────────────────────────────────
-        ray_full = Line(P, H, stroke_color=LODEV_RED,
-                        stroke_width=3.5, z_index=5)
-        hit_dot = Dot(H, radius=0.11, color=LODEV_RED, z_index=10)
-        self.play(Create(ray_full), FadeIn(hit_dot), run_time=0.7)
-        self.wait(0.3)
- 
-        # ── perpWallDist: A → H ──────────────────────────────────────────
-        dot_A = Dot(A, radius=0.05, color=LODEV_BLUE, z_index=8)
-        perp_line = Line(A, H, stroke_color=LODEV_GREEN,
-                         stroke_width=5.5, z_index=6)
-        AH_vec = H - A
-        AH_u = AH_vec / (np.linalg.norm(AH_vec) + 1e-12)
-        AH_perp = np.array([-AH_u[1], AH_u[0], 0])
-        perp_lbl = backed_label("perpWallDist", font_size=17,
-                                color=LODEV_GREEN, weight=BOLD)
-        perp_lbl.move_to((A + H) / 2 + AH_perp * 0.38)
-        self.play(FadeIn(dot_A), Create(perp_line), FadeIn(perp_lbl),
-                  run_time=0.7)
-        self.wait(0.4)
- 
-        # ── Euclidean: dotted P → H ──────────────────────────────────────
-        euc_line = DashedLine(P, H, stroke_color=TEXT_PRIMARY,
-                              stroke_width=2.5, dash_length=0.10,
-                              z_index=4, stroke_opacity=0.65)
-        euc_lbl = backed_label("Euclidean", font_size=15,
-                               color=LODEV_RED, weight=BOLD,
-                               slant=ITALIC)
-        euc_lbl.move_to((P + H) / 2 + ray_perp * 0.38)
-        self.play(Create(euc_line), FadeIn(euc_lbl), run_time=0.6)
- 
-        # ── yDist: B → H ─────────────────────────────────────────────────
-        dot_B = Dot(B, radius=0.05, color=LODEV_BLUE, z_index=8)
-        ydist_line = Line(B, H, stroke_color=LODEV_RED,
-                          stroke_width=4, z_index=5)
-        yd_lbl = backed_label("yDist", font_size=17, color=LODEV_RED,
-                              weight=BOLD)
-        yd_lbl.next_to(ydist_line, RIGHT, buff=0.12)
-        ra_B = right_angle_mark(B, [-1, 0, 0], [0, 1, 0],
-                                size=0.10, color=TEXT_PRIMARY)
-        self.play(FadeIn(dot_B), Create(ydist_line), FadeIn(yd_lbl),
-                  Create(ra_B), run_time=0.6)
- 
-        # ── Dotted horizontal P → B ──────────────────────────────────────
-        horiz_dot = DashedLine(P, B, stroke_color=LODEV_GREEN,
-                               stroke_width=1.5, dash_length=0.08,
-                               stroke_opacity=0.45)
-        self.play(Create(horiz_dot), run_time=0.3)
- 
-        # ── Orange dotted: dir_tip → D ───────────────────────────────────
-        orange_dot = DashedLine(dir_tip, D, stroke_color=LODEV_ORANGE,
-                                stroke_width=2, dash_length=0.08,
-                                stroke_opacity=0.75)
-        self.play(Create(orange_dot), run_time=0.3)
-        self.wait(1.0)
- 
-        # ==================================================================
-        # Annotation boxes — side by side at the bottom
-        # ==================================================================
- 
+
+        # Shared callout helper
         def make_callout(lines, accent):
             txt_group = VGroup(*[
                 Text(t, font_size=fs, color=accent, weight=w)
@@ -586,52 +547,526 @@ class WallRenderScene(Scene):
             )
             txt_group.move_to(bg.get_center())
             return VGroup(bg, txt_group)
- 
-        # ── Red box (Euclidean is wrong) — appears first, stays ───────────
-        bad_box = make_callout([
-            ("Euclidean distance varies with", 16, NORMAL),
-            ("ray angle → fisheye effect!", 16, BOLD),
-        ], ACCENT_ALERT)
- 
-        # ── Green box (perpWallDist is correct) — appears second ──────────
-        good_box = make_callout([
-            ("perpWallDist = dist ⊥ to", 16, NORMAL),
-            ("camera plane", 16, NORMAL),
-            ("= sideDistY − deltaDistY", 15, NORMAL),
-            ("→ no fisheye distortion", 15, BOLD),
-        ], HIT_COLOR)
- 
-        # Arrange side by side at the bottom
-        callout_row = VGroup(bad_box, good_box).arrange(RIGHT, buff=0.3)
-        callout_row.to_edge(DOWN, buff=0.2)
- 
-        self.play(FadeIn(bad_box), run_time=0.5)
-        self.wait(1.5)
-        self.play(FadeIn(good_box), run_time=0.5)
-        self.wait(2.5)
- 
-        # ── Collect diagram elements ──────────────────────────────────────
-        diagram_all = VGroup(
-            grid_group, cam_plane_line, cam_lbl,
-            player_dot,
-            dir_arrow, dlbl,
-            ray_arrow, rdlbl,
-            arr_rdx, rdx_lbl, arr_rdy, rdy_lbl, ra_C,
-            ray_full, hit_dot,
-            dot_A, perp_line, perp_lbl,
-            euc_line, euc_lbl,
-            dot_B, ydist_line, yd_lbl, ra_B,
-            horiz_dot, orange_dot,
-            bad_box, good_box,
+
+        # ==================================================================
+        # SCENE 1 — Fisheye problem: Euclidean distances differ
+        # Left: top-down view   Right: distorted screen output
+        # ==================================================================
+
+        intro = Text("DDA found the wall. Now: how tall should it appear?",
+                     font_size=28, color=TEXT_MUTED)
+        intro.move_to(ORIGIN)
+        self.play(FadeIn(intro, shift=UP * 0.15), run_time=0.6)
+        self.wait(1.2)
+        self.play(FadeOut(intro), run_time=0.4)
+
+        # ── Split layout ──────────────────────────────────────────────────
+        div1 = DashedLine([0.3, -3.5, 0], [0.3, 2.3, 0],
+                          stroke_color="#1A3050", stroke_width=1.5,
+                          dash_length=0.15)
+        lhdr1 = Text("Top-Down View", font_size=19,
+                      color=TEXT_MUTED).move_to([-3.2, 2.5, 0])
+        rhdr1 = Text("Screen Output (Euclidean)", font_size=19,
+                      color=ACCENT_ALERT).move_to([4.0, 2.5, 0])
+        self.play(Create(div1), FadeIn(lhdr1), FadeIn(rhdr1), run_time=0.4)
+
+        # ── Left side: player looking straight at a wall ──────────────────
+        wall_y1 = 1.8
+        wall_line1 = Line([-6.5, wall_y1, 0], [0.0, wall_y1, 0],
+                          stroke_color=TEXT_PRIMARY, stroke_width=5)
+        wall_fill1 = Rectangle(width=6.5, height=0.5,
+                               fill_color=WALL_COLOR, fill_opacity=0.6,
+                               stroke_width=0)
+        wall_fill1.next_to(wall_line1, UP, buff=0)
+        wall_fill1.align_to(wall_line1, LEFT)
+
+        P1 = np.array([-3.2, -2.2, 0])
+        player1 = Dot(P1, radius=0.14, color=PLAYER_A_COLOR, z_index=10)
+
+        self.play(FadeIn(wall_line1), FadeIn(wall_fill1),
+                  FadeIn(player1), run_time=0.5)
+
+        # ── Cast 5 green rays fanning out to the wall ─────────────────────
+        num_rays = 5
+        ray_spread = np.linspace(-2.5, 1.5, num_rays)
+        ray_hits = []
+        ray_lines1 = VGroup()
+        hit_dots1 = VGroup()
+        euc_labels = VGroup()
+
+        for i, x_off in enumerate(ray_spread):
+            hit = np.array([P1[0] + x_off, wall_y1, 0])
+            ray_hits.append(hit)
+            euc_dist = np.linalg.norm(hit - P1)
+
+            rl = Arrow(P1, hit, buff=0, stroke_width=2.5,
+                       color=LODEV_GREEN,
+                       max_tip_length_to_length_ratio=0.08)
+            hd = Dot(hit, radius=0.06, color=HIT_COLOR, z_index=6)
+            ray_lines1.add(rl)
+            hit_dots1.add(hd)
+
+            # Distance label at midpoint
+            mid = (P1 + hit) / 2
+            ray_vec = hit - P1
+            ray_u = ray_vec / (np.linalg.norm(ray_vec) + 1e-12)
+            perp = np.array([-ray_u[1], ray_u[0], 0])
+            dlbl = Text(f"{euc_dist:.1f}", font_size=14, color=LODEV_GREEN)
+            side = 1 if i < num_rays // 2 else -1
+            dlbl.move_to(mid + perp * 0.25 * side)
+            euc_labels.add(dlbl)
+
+        for rl, hd in zip(ray_lines1, hit_dots1):
+            self.play(GrowArrow(rl), FadeIn(hd, scale=0.5), run_time=0.18)
+        self.play(FadeIn(euc_labels, lag_ratio=0.1), run_time=0.5)
+        self.wait(0.5)
+
+        # ── Right side: screen columns using Euclidean (fisheye) ──────────
+        scr_w1, scr_h1 = 3.8, 3.5
+        scr_cx1, scr_cy1 = 4.0, -0.5
+        screen_bg1 = Rectangle(width=scr_w1, height=scr_h1,
+                               fill_color="#060D16", fill_opacity=1.0,
+                               stroke_color="#1A3050", stroke_width=1.5,
+                               ).move_to([scr_cx1, scr_cy1, 0])
+        self.play(FadeIn(screen_bg1), run_time=0.3)
+
+        col_w1 = scr_w1 / num_rays
+        euc_cols = VGroup()
+        perp_dist_1 = abs(wall_y1 - P1[1])
+        for i, hit in enumerate(ray_hits):
+            euc_d = np.linalg.norm(hit - P1)
+            line_h = min(scr_h1 - 0.05, scr_h1 * perp_dist_1 / euc_d)
+            ceil_h = max(0.0, (scr_h1 - line_h) / 2)
+            col_x = scr_cx1 - scr_w1 / 2 + (i + 0.5) * col_w1
+            shade = interpolate_color(ManimColor(WALL_COLOR_DARK),
+                                      ManimColor(WALL_COLOR), 0.5)
+            wrect = Rectangle(width=col_w1 - 0.04, height=line_h,
+                              fill_color=shade, fill_opacity=0.92,
+                              stroke_width=0).move_to([col_x, scr_cy1, 0])
+            crect = Rectangle(width=col_w1 - 0.04, height=ceil_h,
+                              fill_color="#0C1830", fill_opacity=1.0,
+                              stroke_width=0).next_to(wrect, UP, buff=0)
+            frect = Rectangle(width=col_w1 - 0.04, height=ceil_h,
+                              fill_color="#1A1A1A", fill_opacity=1.0,
+                              stroke_width=0).next_to(wrect, DOWN, buff=0)
+            euc_cols.add(VGroup(crect, wrect, frect))
+        self.play(FadeIn(euc_cols, lag_ratio=0.08), run_time=0.6)
+
+        fisheye_lbl = Text("Walls appear curved!", font_size=20,
+                           color=ACCENT_ALERT, weight=BOLD)
+        fisheye_lbl.next_to(screen_bg1, DOWN, buff=0.20)
+        self.play(FadeIn(fisheye_lbl), run_time=0.4)
+        self.wait(2.0)
+
+        scene1_all = VGroup(
+            div1, lhdr1, rhdr1,
+            wall_line1, wall_fill1, player1,
+            ray_lines1, hit_dots1, euc_labels,
+            screen_bg1, euc_cols, fisheye_lbl,
         )
- 
+        self.play(FadeOut(scene1_all), run_time=0.6)
+
         # ==================================================================
-        # PHASE 2 — Multi-ray + screen columns
+        # SCENE 2 — perpWallDist solution
+        # Left: single ray with camera plane   Right: corrected output
         # ==================================================================
-        self.play(FadeOut(diagram_all), run_time=0.7)
+
+        scene2_hdr = Text("Solution: use perpendicular distance",
+                          font_size=28, color=TEXT_PRIMARY, weight=BOLD)
+        scene2_hdr.move_to(ORIGIN)
+        self.play(FadeIn(scene2_hdr, shift=UP * 0.15), run_time=0.6)
+        self.wait(1.2)
+        self.play(FadeOut(scene2_hdr), run_time=0.4)
+
+        div2 = DashedLine([0.3, -3.5, 0], [0.3, 2.3, 0],
+                          stroke_color="#1A3050", stroke_width=1.5,
+                          dash_length=0.15)
+        lhdr2 = Text("Top-Down View", font_size=19,
+                      color=TEXT_MUTED).move_to([-3.2, 2.5, 0])
+        rhdr2 = Text("Screen Output (perpWallDist)", font_size=19,
+                      color=HIT_COLOR).move_to([4.0, 2.5, 0])
+        self.play(Create(div2), FadeIn(lhdr2), FadeIn(rhdr2), run_time=0.4)
+
+        # ── Left: simplified diagram ──────────────────────────────────────
+        wall_y2 = 1.8
+        wall_line2 = Line([-6.5, wall_y2, 0], [0.0, wall_y2, 0],
+                          stroke_color=TEXT_PRIMARY, stroke_width=5)
+        wall_fill2 = Rectangle(width=6.5, height=0.5,
+                               fill_color=WALL_COLOR, fill_opacity=0.6,
+                               stroke_width=0)
+        wall_fill2.next_to(wall_line2, UP, buff=0)
+        wall_fill2.align_to(wall_line2, LEFT)
+
+        P2 = np.array([-3.2, -2.2, 0])
+        player2 = Dot(P2, radius=0.14, color=PLAYER_A_COLOR, z_index=10)
+
+        # Camera plane — horizontal through player
+        cam_plane2 = Line([P2[0] - 2.8, P2[1], 0],
+                          [P2[0] + 2.8, P2[1], 0],
+                          stroke_color=ACCENT_HARDWARE, stroke_width=3,
+                          stroke_opacity=0.7)
+        cam_lbl2 = backed_label("camera plane", font_size=14,
+                                color=ACCENT_HARDWARE, slant=ITALIC)
+        cam_lbl2.next_to(cam_plane2, DOWN + RIGHT, buff=0.08)
+
+        self.play(FadeIn(wall_line2), FadeIn(wall_fill2),
+                  FadeIn(player2), Create(cam_plane2), FadeIn(cam_lbl2),
+                  run_time=0.5)
+
+        # Single angled ray
+        hit2 = np.array([-1.5, wall_y2, 0])
+        ray2 = Arrow(P2, hit2, buff=0, stroke_width=3,
+                     color=LODEV_GREEN,
+                     max_tip_length_to_length_ratio=0.08)
+        hit_dot2 = Dot(hit2, radius=0.08, color=HIT_COLOR, z_index=8)
+        self.play(GrowArrow(ray2), FadeIn(hit_dot2), run_time=0.5)
+
+        # Euclidean (dotted red)
+        euc_line2 = DashedLine(P2, hit2, stroke_color=ACCENT_ALERT,
+                               stroke_width=2, dash_length=0.10,
+                               stroke_opacity=0.6, z_index=3)
+        euc_d2 = np.linalg.norm(hit2 - P2)
+        euc_lbl2 = backed_label(f"Euclidean = {euc_d2:.1f}", font_size=14,
+                                color=ACCENT_ALERT, slant=ITALIC)
+        ray_u2 = (hit2 - P2) / euc_d2
+        perp_u2 = np.array([-ray_u2[1], ray_u2[0], 0])
+        euc_lbl2.move_to((P2 + hit2) / 2 + perp_u2 * 0.35)
+        self.play(Create(euc_line2), FadeIn(euc_lbl2), run_time=0.5)
+
+        # perpWallDist — vertical from hit down to camera plane
+        perp_foot = np.array([hit2[0], P2[1], 0])
+        perp_line2 = Line(hit2, perp_foot, stroke_color=HIT_COLOR,
+                          stroke_width=4.5, z_index=6)
+        perp_d2 = abs(wall_y2 - P2[1])
+        perp_lbl2 = backed_label(f"perpWallDist = {perp_d2:.1f}",
+                                 font_size=14, color=HIT_COLOR, weight=BOLD)
+        perp_lbl2.next_to(perp_line2, RIGHT, buff=0.12)
+
+        ra2 = right_angle_mark(perp_foot, [-1, 0, 0], [0, 1, 0],
+                               size=0.12, color=HIT_COLOR)
+        self.play(Create(perp_line2), FadeIn(perp_lbl2), Create(ra2),
+                  run_time=0.6)
+        self.wait(0.5)
+
+        # Show perpWallDist is the same for ALL rays
+        other_hits = [np.array([P2[0] - 2.0, wall_y2, 0]),
+                      np.array([P2[0] + 0.5, wall_y2, 0])]
+        other_perps = VGroup()
+        for oh in other_hits:
+            foot = np.array([oh[0], P2[1], 0])
+            pl = Line(oh, foot, stroke_color=HIT_COLOR, stroke_width=2,
+                      stroke_opacity=0.5, z_index=4)
+            other_perps.add(pl)
+
+        same_lbl = backed_label("same distance for every ray!",
+                                font_size=15, color=HIT_COLOR, weight=BOLD)
+        same_lbl.move_to([-3.2, 0.0, 0])
+        self.play(FadeIn(other_perps, lag_ratio=0.15), FadeIn(same_lbl),
+                  run_time=0.6)
+        self.wait(0.8)
+
+        # ── Right: corrected screen (flat wall) ───────────────────────────
+        scr_w2, scr_h2 = 3.8, 3.5
+        scr_cx2, scr_cy2 = 4.0, -0.5
+        screen_bg2 = Rectangle(width=scr_w2, height=scr_h2,
+                               fill_color="#060D16", fill_opacity=1.0,
+                               stroke_color="#1A3050", stroke_width=1.5,
+                               ).move_to([scr_cx2, scr_cy2, 0])
+        self.play(FadeIn(screen_bg2), run_time=0.3)
+
+        col_w2 = scr_w2 / num_rays
+        perp_cols = VGroup()
+        for i in range(num_rays):
+            line_h = scr_h2 * 0.75
+            ceil_h = max(0.0, (scr_h2 - line_h) / 2)
+            col_x = scr_cx2 - scr_w2 / 2 + (i + 0.5) * col_w2
+            shade = interpolate_color(ManimColor(WALL_COLOR_DARK),
+                                      ManimColor(WALL_COLOR), 0.5)
+            wrect = Rectangle(width=col_w2 - 0.04, height=line_h,
+                              fill_color=shade, fill_opacity=0.92,
+                              stroke_width=0).move_to([col_x, scr_cy2, 0])
+            crect = Rectangle(width=col_w2 - 0.04, height=ceil_h,
+                              fill_color="#0C1830", fill_opacity=1.0,
+                              stroke_width=0).next_to(wrect, UP, buff=0)
+            frect = Rectangle(width=col_w2 - 0.04, height=ceil_h,
+                              fill_color="#1A1A1A", fill_opacity=1.0,
+                              stroke_width=0).next_to(wrect, DOWN, buff=0)
+            perp_cols.add(VGroup(crect, wrect, frect))
+        self.play(FadeIn(perp_cols, lag_ratio=0.08), run_time=0.6)
+
+        flat_lbl = Text("Walls render flat — correct!", font_size=20,
+                        color=HIT_COLOR, weight=BOLD)
+        flat_lbl.next_to(screen_bg2, DOWN, buff=0.20)
+        self.play(FadeIn(flat_lbl), run_time=0.4)
+
+        # ── Formula callout ───────────────────────────────────────────────
+        formula_txt = VGroup(
+            Text("perpWallDist = sideDistX − deltaDistX",
+                 font_size=18, color=TEXT_PRIMARY),
+            Text("Reuses DDA values — zero extra cost",
+                 font_size=16, color=TEXT_MUTED),
+            Text("lineHeight = screenHeight / perpWallDist",
+                 font_size=18, color=HIT_COLOR),
+        ).arrange(DOWN, buff=0.06, aligned_edge=LEFT)
+        formula_bg = RoundedRectangle(
+            corner_radius=0.10,
+            width=formula_txt.width + 0.4,
+            height=formula_txt.height + 0.25,
+            fill_color=PANEL_FILL, fill_opacity=0.96,
+            stroke_color=ACCENT_SERVER, stroke_width=1.5,
+        )
+        formula_bg.to_edge(DOWN, buff=0.08)
+        formula_txt.move_to(formula_bg)
+        self.play(FadeIn(VGroup(formula_bg, formula_txt)), run_time=0.5)
+        self.wait(3.0)
+
+        scene2_all = VGroup(
+            div2, lhdr2, rhdr2,
+            wall_line2, wall_fill2, player2, cam_plane2, cam_lbl2,
+            ray2, hit_dot2,
+            euc_line2, euc_lbl2,
+            perp_line2, perp_lbl2, ra2,
+            other_perps, same_lbl,
+            screen_bg2, perp_cols, flat_lbl,
+            formula_bg, formula_txt,
+        )
+        self.play(FadeOut(scene2_all), run_time=0.6)
+
+        # ==================================================================
+        # SCENE 2.5 — How perpWallDist is computed from DDA values
+        # Shows sideDistX, sideDistY, deltaDistX, deltaDistY on a grid
+        # ==================================================================
+
+        s25_hdr = Text("Computing perpWallDist from DDA",
+                       font_size=28, color=TEXT_PRIMARY, weight=BOLD)
+        s25_hdr.move_to(ORIGIN)
+        self.play(FadeIn(s25_hdr, shift=UP * 0.15), run_time=0.6)
+        self.wait(1.2)
+        self.play(FadeOut(s25_hdr), run_time=0.4)
+
+        # ── Grid background (few large cells for clarity) ─────────────────
+        s25_rows, s25_cols = 5, 5
+        s25_cs = 1.15
+        s25_ox = -s25_cols * s25_cs / 2
+        s25_oy = 2.4
+
+        def s25_g2s(r, c):
+            return np.array([s25_ox + (c + 0.5) * s25_cs,
+                             s25_oy - (r + 0.5) * s25_cs, 0])
+
+        # Wall in top-right corner (2x2 block)
+        s25_wall = [[0]*s25_cols for _ in range(s25_rows)]
+        for r in range(2):
+            for c in range(3, s25_cols):
+                s25_wall[r][c] = 1
+
+        s25_grid = VGroup()
+        for r in range(s25_rows):
+            for c in range(s25_cols):
+                sq = Square(side_length=s25_cs, stroke_width=1.0,
+                            stroke_color=LODEV_GRID, stroke_opacity=0.40)
+                if s25_wall[r][c]:
+                    sq.set_fill(WALL_COLOR, opacity=0.85)
+                else:
+                    sq.set_fill(EMPTY_COLOR, opacity=0.08)
+                sq.move_to(s25_g2s(r, c))
+                s25_grid.add(sq)
+        self.play(FadeIn(s25_grid, lag_ratio=0.003), run_time=0.5)
+
+        # ── Player and ray ────────────────────────────────────────────────
+        s25_P = s25_g2s(4, 0) + np.array([0.25, 0.25, 0])
+        s25_player = Dot(s25_P, radius=0.13, color=PLAYER_A_COLOR, z_index=10)
+        self.play(FadeIn(s25_player), run_time=0.3)
+
+        # Ray direction: up and to the right, hitting the wall
+        s25_ray_angle = np.radians(58)
+        s25_ray_dir = np.array([np.cos(s25_ray_angle),
+                                np.sin(s25_ray_angle), 0])
+
+        # Find wall hit
+        s25_hit = None
+        for s in range(1, 500):
+            pos = s25_P + s25_ray_dir * 0.015 * s
+            rel = pos - s25_grid.get_center()
+            gc = int(np.floor(rel[0] / s25_cs + s25_cols / 2))
+            gr = int(np.floor(-rel[1] / s25_cs + s25_rows / 2))
+            if 0 <= gr < s25_rows and 0 <= gc < s25_cols:
+                if s25_wall[gr][gc] == 1:
+                    s25_hit = pos
+                    break
+
+        if s25_hit is None:
+            s25_hit = s25_P + s25_ray_dir * 4.0
+
+        # Draw ray
+        s25_ray = Line(s25_P, s25_hit, stroke_color=LODEV_RED,
+                       stroke_width=3, z_index=5)
+        s25_hit_dot = Dot(s25_hit, radius=0.08, color=LODEV_RED, z_index=10)
+        self.play(Create(s25_ray), FadeIn(s25_hit_dot), run_time=0.5)
+
+        # ── Camera plane (green diagonal through P) ───────────────────────
+        s25_plane_dir = np.array([s25_ray_dir[1], -s25_ray_dir[0], 0])
+        s25_cp_start = s25_P - s25_plane_dir * 2.5
+        s25_cp_end   = s25_P + s25_plane_dir * 2.5
+        s25_cam = Line(s25_cp_start, s25_cp_end,
+                       stroke_color=LODEV_GREEN, stroke_width=3,
+                       stroke_opacity=0.7)
+        s25_cam_lbl = backed_label("camera plane", font_size=13,
+                                   color=LODEV_GREEN, slant=ITALIC)
+        s25_cam_lbl.next_to(s25_cp_end, DOWN, buff=0.08)
+        self.play(Create(s25_cam), FadeIn(s25_cam_lbl), run_time=0.4)
+
+        # ── Compute the first grid crossings for sideDistX/Y ─────────────
+        # Get grid-relative float position
+        grid_cx = s25_grid.get_center()[0]
+        grid_cy = s25_grid.get_center()[1]
+        gx_f = (s25_P[0] - grid_cx) / s25_cs + s25_cols / 2
+        gy_f = -(s25_P[1] - grid_cy) / s25_cs + s25_rows / 2
+
+        rdx = s25_ray_dir[0]
+        rdy = -s25_ray_dir[1]  # grid y is flipped
+
+        # First x-boundary crossing (sideDistX direction)
+        if rdx > 0:
+            x_bound = (int(gx_f) + 1 - gx_f) * s25_cs
+        else:
+            x_bound = (gx_f - int(gx_f)) * s25_cs
+        t_first_x = x_bound / (abs(rdx) * s25_cs + 1e-12)
+        sdx_end = s25_P + s25_ray_dir * t_first_x * s25_cs
+
+        # First y-boundary crossing (sideDistY direction)
+        if rdy > 0:
+            y_bound = (int(gy_f) + 1 - gy_f) * s25_cs
+        else:
+            y_bound = (gy_f - int(gy_f)) * s25_cs
+        t_first_y = y_bound / (abs(rdy) * s25_cs + 1e-12)
+        sdy_end = s25_P + s25_ray_dir * t_first_y * s25_cs
+
+        # deltaDistX: distance along ray to cross one full x-cell
+        ddx_len = s25_cs / (abs(rdx) + 1e-12)
+        ddx_start = sdx_end
+        ddx_end = sdx_end + s25_ray_dir * (ddx_len / np.linalg.norm(s25_ray_dir))
+
+        # deltaDistY: distance along ray to cross one full y-cell
+        ddy_len = s25_cs / (abs(rdy) + 1e-12)
+        ddy_start = sdy_end
+        ddy_end = sdy_end + s25_ray_dir * (ddy_len / np.linalg.norm(s25_ray_dir))
+
+        # ── Draw sideDistY (green, from P along ray) ─────────────────────
+        sdy_line = Line(s25_P, sdy_end, stroke_color=LODEV_GREEN,
+                        stroke_width=4, z_index=7)
+        sdy_lbl = backed_label("sideDistY", font_size=16,
+                               color=LODEV_GREEN, weight=BOLD)
+        sdy_perp = np.array([-s25_ray_dir[1], s25_ray_dir[0], 0])
+        sdy_lbl.move_to((s25_P + sdy_end) / 2 + sdy_perp * 0.35)
+        sdy_dot = Dot(sdy_end, radius=0.06, color=LODEV_GREEN, z_index=8)
+        self.play(Create(sdy_line), FadeIn(sdy_lbl), FadeIn(sdy_dot),
+                  run_time=0.5)
+
+        # ── Draw sideDistX (blue, from P along ray) ──────────────────────
+        sdx_line = Line(s25_P, sdx_end, stroke_color=LODEV_BLUE,
+                        stroke_width=4, z_index=7)
+        sdx_lbl = backed_label("sideDistX", font_size=16,
+                               color=LODEV_BLUE, weight=BOLD)
+        sdx_lbl.move_to((s25_P + sdx_end) / 2 - sdy_perp * 0.35)
+        sdx_dot = Dot(sdx_end, radius=0.06, color=LODEV_BLUE, z_index=8)
+        self.play(Create(sdx_line), FadeIn(sdx_lbl), FadeIn(sdx_dot),
+                  run_time=0.5)
+        self.wait(0.5)
+
+        # ── Draw deltaDistY (green, continuing from sideDistY end) ────────
+        ddy_line = Line(ddy_start, ddy_end, stroke_color=LODEV_GREEN,
+                        stroke_width=3, stroke_opacity=0.7, z_index=7)
+        ddy_lbl = backed_label("deltaDistY", font_size=14,
+                               color=LODEV_GREEN, weight=BOLD)
+        ddy_lbl.move_to((ddy_start + ddy_end) / 2 + sdy_perp * 0.32)
+        self.play(Create(ddy_line), FadeIn(ddy_lbl), run_time=0.4)
+
+        # ── Draw deltaDistX (blue, continuing from sideDistX end) ─────────
+        ddx_line = Line(ddx_start, ddx_end, stroke_color=LODEV_BLUE,
+                        stroke_width=3, stroke_opacity=0.7, z_index=7)
+        ddx_lbl = backed_label("deltaDistX", font_size=14,
+                               color=LODEV_BLUE, weight=BOLD)
+        ddx_lbl.move_to((ddx_start + ddx_end) / 2 - sdy_perp * 0.32)
+        self.play(Create(ddx_line), FadeIn(ddx_lbl), run_time=0.4)
+        self.wait(0.8)
+
+        # ── perpWallDist line (magenta, from cam plane to hit) ────────────
+        # Project hit onto the dir vector from P
+        perp_d_val = np.dot(s25_hit - s25_P, s25_ray_dir / np.linalg.norm(s25_ray_dir))
+        # Visually: line from the camera plane at the hit's projection back to hit
+        proj_on_cam = s25_P + np.dot(s25_hit - s25_P, s25_plane_dir) * s25_plane_dir / (np.linalg.norm(s25_plane_dir)**2 + 1e-12)
+        # Actually perpWallDist is parallel to dir, so draw from A (on cam plane) to H
+        A_pt = s25_hit - s25_ray_dir * (np.dot(s25_hit - s25_P, s25_plane_dir)**2)**0  # simplify: A is projection of H onto cam plane
+        # Better: A = P + component of (H-P) along plane_dir * plane_dir_unit
+        s25_pvu = s25_plane_dir / (np.linalg.norm(s25_plane_dir) + 1e-12)
+        s25_A = s25_P + np.dot(s25_hit - s25_P, s25_pvu) * s25_pvu
+        perp_vis = Line(s25_A, s25_hit, stroke_color="#CC44FF",
+                        stroke_width=5, z_index=8)
+        perp_vis_lbl = backed_label("perpWallDist", font_size=17,
+                                    color="#CC44FF", weight=BOLD)
+        AH_d = s25_hit - s25_A
+        AH_u_v = AH_d / (np.linalg.norm(AH_d) + 1e-12)
+        AH_p = np.array([-AH_u_v[1], AH_u_v[0], 0])
+        perp_vis_lbl.move_to((s25_A + s25_hit) / 2 + AH_p * 0.40)
+        self.play(Create(perp_vis), FadeIn(perp_vis_lbl), run_time=0.6)
+        self.wait(0.5)
+
+        # ── Formula callout at bottom ─────────────────────────────────────
+        s25_formula = VGroup(
+            Text("For an x-side hit:", font_size=18,
+                 color=TEXT_PRIMARY, weight=BOLD),
+            Text("perpWallDist = sideDistX − deltaDistX",
+                 font_size=20, color=LODEV_BLUE),
+            Text("For a y-side hit:", font_size=18,
+                 color=TEXT_PRIMARY, weight=BOLD),
+            Text("perpWallDist = sideDistY − deltaDistY",
+                 font_size=20, color=LODEV_GREEN),
+            Text("These values are already computed during DDA stepping",
+                 font_size=16, color=TEXT_MUTED),
+        ).arrange(DOWN, buff=0.10, aligned_edge=LEFT)
+        s25_formula_bg = RoundedRectangle(
+            corner_radius=0.10,
+            width=s25_formula.width + 0.5,
+            height=s25_formula.height + 0.3,
+            fill_color=PANEL_FILL, fill_opacity=0.96,
+            stroke_color=ACCENT_SERVER, stroke_width=1.5,
+        )
+        s25_formula_bg.to_edge(DOWN, buff=0.08)
+        s25_formula.move_to(s25_formula_bg)
+        self.play(FadeIn(VGroup(s25_formula_bg, s25_formula)), run_time=0.5)
+        self.wait(3.5)
+
+        # ── Clean up ──────────────────────────────────────────────────────
+        s25_all = VGroup(
+            s25_grid, s25_player, s25_ray, s25_hit_dot,
+            s25_cam, s25_cam_lbl,
+            sdy_line, sdy_lbl, sdy_dot,
+            sdx_line, sdx_lbl, sdx_dot,
+            ddy_line, ddy_lbl, ddx_line, ddx_lbl,
+            perp_vis, perp_vis_lbl,
+            s25_formula_bg, s25_formula,
+        )
+        self.play(FadeOut(s25_all), run_time=0.6)
+
+        # ==================================================================
+        # SCENE 3 — Multi-ray + screen columns (existing Phase 2)
+        # ==================================================================
+        grid_rows, grid_cols = 8, 9
+        cs = 0.62
+        dir_angle = np.radians(68)
+        dir_vec = np.array([np.cos(dir_angle), np.sin(dir_angle), 0])
+        plane_vec = np.array([dir_vec[1], -dir_vec[0], 0]) * 0.66
+
+        divider = DashedLine([0.5, -3.8, 0], [0.5, 3.2, 0],
+                             stroke_color="#1A3050", stroke_width=1.5,
+                             dash_length=0.15)
+        lhdr = Text("Top-Down View", font_size=21,
+                     color=TEXT_MUTED).move_to([-3.0, 2.85, 0])
+        rhdr = Text("Screen Output", font_size=21,
+                     color=TEXT_MUTED).move_to([4.2, 2.85, 0])
         self.play(Create(divider), FadeIn(lhdr), FadeIn(rhdr), run_time=0.5)
 
-        # Phase 2 uses left-half positioning (separate from centred Phase 1)
         grid_ox_p2 = -6.6
         grid_oy_p2 = 2.45
 
@@ -642,7 +1077,6 @@ class WallRenderScene(Scene):
         P_p2 = g2s_p2(6, 1) + np.array([0.05, 0.1, 0])
         wall_y_p2 = grid_oy_p2 - cs
 
-        # Rebuild grid for left half
         wall_map_p2 = [[0]*grid_cols for _ in range(grid_rows)]
         for c in [2, 3, 4, 5, 6, 7]:
             wall_map_p2[0][c] = 1
@@ -663,7 +1097,6 @@ class WallRenderScene(Scene):
         sp_lbl = Text("P", font_size=20, color=PLAYER_A_COLOR, weight=BOLD)
         sp_lbl.next_to(simp_player, DOWN + LEFT, buff=0.06)
 
-        # Wall line spanning full grid width
         wl_left  = np.array([grid_ox_p2, wall_y_p2, 0])
         wl_right = np.array([grid_ox_p2 + grid_cols * cs, wall_y_p2, 0])
         simp_wall = Line(wl_left, wl_right,
@@ -674,14 +1107,9 @@ class WallRenderScene(Scene):
         self.play(FadeIn(simp_grid), FadeIn(simp_wall), FadeIn(sw_lbl),
                   FadeIn(simp_player), FadeIn(sp_lbl), run_time=0.5)
 
-        # ── Cast 5 rays with narrower FOV ─────────────────────────────────
         num_cols = 5
-        screen_w = 3.2
-        screen_h = 3.2
-        screen_cx = 4.2
-        screen_cy = -0.1
-        col_w = screen_w / num_cols
-
+        screen_w, screen_h = 3.2, 3.2
+        screen_cx, screen_cy = 4.2, -0.1
         narrow_plane = plane_vec * 0.65
 
         ray_data = []
@@ -697,10 +1125,10 @@ class WallRenderScene(Scene):
                 continue
             perp_d = np.dot(hit - P_p2, dir_vec)
             ray_data.append((cx, rd3, hit, perp_d))
- 
+
         actual_cols = len(ray_data)
         act_col_w = screen_w / actual_cols
- 
+
         ray_lines = VGroup()
         hit_dots_r = VGroup()
         for i, (cx, rd, hit, perp_d) in enumerate(ray_data):
@@ -713,16 +1141,14 @@ class WallRenderScene(Scene):
             ray_lines.add(rl)
             hit_dots_r.add(hd)
             self.play(Create(rl), FadeIn(hd, scale=0.5), run_time=0.22)
- 
-        # ── Screen background ─────────────────────────────────────────────
+
         screen_bg = Rectangle(
             width=screen_w, height=screen_h,
             fill_color="#060D16", fill_opacity=1.0,
             stroke_color="#1A3050", stroke_width=1.5,
         ).move_to([screen_cx, screen_cy, 0])
         self.play(FadeIn(screen_bg), run_time=0.3)
- 
-        # ── Screen columns ────────────────────────────────────────────────
+
         col_groups = VGroup()
         height_annots = VGroup()
         for i, (cx, _, hit, perp_d) in enumerate(ray_data):
@@ -734,30 +1160,26 @@ class WallRenderScene(Scene):
                                       i / max(actual_cols - 1, 1))
             wall_rect = Rectangle(
                 width=act_col_w - 0.05, height=line_h,
-                fill_color=shade, fill_opacity=0.92,
-                stroke_width=0,
+                fill_color=shade, fill_opacity=0.92, stroke_width=0,
             ).move_to([col_x, screen_cy, 0])
             ceil_rect = Rectangle(
                 width=act_col_w - 0.05, height=ceil_h,
-                fill_color="#0C1830", fill_opacity=1.0,
-                stroke_width=0,
+                fill_color="#0C1830", fill_opacity=1.0, stroke_width=0,
             ).next_to(wall_rect, UP, buff=0)
             floor_rect = Rectangle(
                 width=act_col_w - 0.05, height=ceil_h,
-                fill_color="#1A1A1A", fill_opacity=1.0,
-                stroke_width=0,
+                fill_color="#1A1A1A", fill_opacity=1.0, stroke_width=0,
             ).next_to(wall_rect, DOWN, buff=0)
             col_groups.add(VGroup(ceil_rect, wall_rect, floor_rect))
             self.play(FadeIn(col_groups[-1], scale=0.85), run_time=0.22)
- 
+
             ann_y = min(screen_cy + screen_h / 2 - 0.18,
                         screen_cy + line_h / 2 + 0.2)
             ann = Text(f"{line_h:.1f}", font_size=15, color=HIT_COLOR)
             ann.move_to([col_x, ann_y, 0])
             height_annots.add(ann)
         self.play(FadeIn(height_annots, lag_ratio=0.1), run_time=0.4)
- 
-        # ── Brace on centre column ────────────────────────────────────────
+
         mid_i = actual_cols // 2
         c_perp = ray_data[mid_i][3]
         c_lineh = min(screen_h - 0.05, screen_h / c_perp)
@@ -774,43 +1196,13 @@ class WallRenderScene(Scene):
         self.play(Create(brace), FadeIn(b_lbl), run_time=0.6)
         self.wait(1.0)
         self.play(FadeOut(brace), FadeOut(b_lbl), run_time=0.4)
- 
-        # ==================================================================
-        # PHASE 3 — Formula panel
-        # ==================================================================
-        formula_box = RoundedRectangle(
-            corner_radius=0.15, width=13.0, height=2.2,
-            fill_color=PANEL_FILL, fill_opacity=0.97,
-            stroke_color=ACCENT_SERVER, stroke_width=2,
-        ).to_edge(DOWN, buff=0.08)
-        fl1 = Text("rayDir  =  dir  +  plane × cameraX",
-                    font_size=24, color=TEXT_PRIMARY, slant=ITALIC)
-        fl2 = Text("perpWallDist  =  sideDistY − deltaDistY     (y-side hit)",
-                    font_size=21, color=TEXT_MUTED)
-        fl3 = Text(
-            "lineHeight  =  screenHeight / perpWallDist"
-            "     (⊥ distance — no fisheye)",
-            font_size=20, color=ACCENT_STORAGE,
-        )
-        formula = VGroup(fl1, fl2, fl3).arrange(DOWN, buff=0.16,
-                                                aligned_edge=LEFT)
-        formula.move_to(formula_box.get_center())
-        if formula.get_width() > 12.6:
-            formula.scale_to_fit_width(12.6)
- 
-        self.play(FadeIn(formula_box), run_time=0.3)
-        self.play(Write(fl1), run_time=0.8)
-        self.play(FadeIn(fl2, shift=UP * 0.1), run_time=0.6)
-        self.play(FadeIn(fl3, shift=UP * 0.1), run_time=0.6)
-        self.wait(3.8)
- 
-        # ── Final fade out ────────────────────────────────────────────────
+        self.wait(1.5)
+
         self.play(FadeOut(VGroup(
             section, divider, lhdr, rhdr,
             simp_grid, simp_wall, sw_lbl, simp_player, sp_lbl,
             ray_lines, hit_dots_r,
             screen_bg, col_groups, height_annots,
-            formula_box, formula,
         )), run_time=0.9)
 
 
@@ -1155,7 +1547,479 @@ class ServerHardwareClosingCard(Scene):
         self.play(FadeOut(group, scale=1.02))
 
 
-class PipelineScene(Scene):
+# ═══════════════════════════════════════════════════════════════════════════
+# SEDA Deep-Dive — animated packet flow with queue isolation
+# ═══════════════════════════════════════════════════════════════════════════
+
+class SEDADeepDiveScene(Scene):
+    def construct(self):
+        self.camera.background_color = BACKGROUND
+
+        # ── Title ─────────────────────────────────────────────────────────
+        title = Text("SEDA Pipeline — Queue Isolation", font_size=40,
+                     color=PYNQ_RED, weight=BOLD)
+        title.to_edge(UP, buff=0.35)
+        self.play(Write(title), run_time=0.8)
+
+        # ── Stage boxes — horizontal layout ───────────────────────────────
+        stage_data = [
+            ("T1: Ingest",    "UDP Receiver",         ACCENT_SERVER),
+            ("T2: Brain",     "20 Hz Game Tick",       ACCENT_SERVER),
+            ("T3: Broadcast", "Egress to clients",     ACCENT_SERVER),
+            ("T4: Archivist", "Redis Writer (thread)",  ACCENT_ALERT),
+        ]
+
+        stages = VGroup()
+        for name, sub, accent in stage_data:
+            box = RoundedRectangle(
+                corner_radius=0.15, width=2.6, height=1.3,
+                stroke_color=accent, stroke_width=2,
+                fill_color=PANEL_FILL, fill_opacity=0.95,
+            )
+            t = Text(name, font_size=20, color=TEXT_PRIMARY, weight=BOLD)
+            s = Text(sub, font_size=14, color=TEXT_MUTED)
+            VGroup(t, s).arrange(DOWN, buff=0.10).move_to(box)
+            stages.add(VGroup(box, t, s))
+
+        # T1 → T2 horizontal, then T2 fans down to T3 and T4
+        t1, t2, t3, t4 = stages
+        t1.move_to(LEFT * 5 + UP * 0.8)
+        t2.move_to(LEFT * 1.5 + UP * 0.8)
+        t3.move_to(RIGHT * 2.5 + UP * 2.0)
+        t4.move_to(RIGHT * 2.5 + DOWN * 0.4)
+
+        # ── Queue boxes (dashed border) ───────────────────────────────────
+        def make_queue(label_str, width=1.8):
+            qbox = RoundedRectangle(
+                corner_radius=0.10, width=width, height=0.65,
+                stroke_color=TEXT_MUTED, stroke_width=1.5,
+                fill_color="#0C1A2C", fill_opacity=0.90,
+            )
+            qbox.set_stroke(opacity=0.7)
+            qlbl = Text(label_str, font_size=13, color=TEXT_MUTED)
+            qlbl.move_to(qbox)
+            return VGroup(qbox, qlbl)
+
+        pq = make_queue("PacketQueue")
+        pq.move_to((t1.get_right() + t2.get_left()) / 2)
+        bq = make_queue("BroadcastQueue")
+        bq.move_to((t2.get_right() + t3.get_left()) / 2 + UP * 0.6)
+        wq = make_queue("WriteQueue")
+        wq.move_to((t2.get_right() + t4.get_left()) / 2 + DOWN * 0.3)
+
+        # ── Arrows ────────────────────────────────────────────────────────
+        arr_kw = dict(buff=0.08, stroke_width=3,
+                      max_tip_length_to_length_ratio=0.14)
+        a1 = Arrow(t1.get_right(), pq.get_left(), color=ACCENT_SERVER, **arr_kw)
+        a2 = Arrow(pq.get_right(), t2.get_left(), color=ACCENT_SERVER, **arr_kw)
+        a3 = Arrow(t2.get_top() + RIGHT * 0.3, bq.get_left(),
+                   color=ACCENT_SERVER, **arr_kw)
+        a4 = Arrow(bq.get_right(), t3.get_left(), color=ACCENT_SERVER, **arr_kw)
+        a5 = Arrow(t2.get_bottom() + RIGHT * 0.3, wq.get_left(),
+                   color=ACCENT_ALERT, **arr_kw)
+        a6 = Arrow(wq.get_right(), t4.get_left(), color=ACCENT_ALERT, **arr_kw)
+
+        # ── Animate build ─────────────────────────────────────────────────
+        self.play(FadeIn(t1, shift=RIGHT * 0.2), run_time=0.4)
+        self.play(GrowArrow(a1), FadeIn(pq), run_time=0.4)
+        self.play(GrowArrow(a2), FadeIn(t2, shift=RIGHT * 0.2), run_time=0.4)
+        self.play(
+            GrowArrow(a3), FadeIn(bq), GrowArrow(a4),
+            FadeIn(t3, shift=LEFT * 0.2),
+            run_time=0.5,
+        )
+        self.play(
+            GrowArrow(a5), FadeIn(wq), GrowArrow(a6),
+            FadeIn(t4, shift=LEFT * 0.2),
+            run_time=0.5,
+        )
+        self.wait(0.8)
+
+        # ── Asyncio vs Thread swim-lane labels ────────────────────────────
+        async_lbl = Text("asyncio event loop (single thread, no locks)",
+                         font_size=16, color=ACCENT_SERVER, slant=ITALIC)
+        async_lbl.next_to(t1, UP, buff=0.22).shift(RIGHT * 1.5)
+        thread_lbl = Text("OS thread (absorbs Redis latency)",
+                          font_size=16, color=ACCENT_ALERT, slant=ITALIC)
+        thread_lbl.next_to(t4, DOWN, buff=0.22)
+        self.play(FadeIn(async_lbl), FadeIn(thread_lbl), run_time=0.5)
+        self.wait(0.6)
+
+        # ── Animate a packet flowing through ──────────────────────────────
+        packet = Dot(radius=0.10, color=ACCENT_HARDWARE, z_index=15)
+        pkt_lbl = Text("UDP pkt", font_size=12, color=ACCENT_HARDWARE)
+        pkt_grp = VGroup(packet, pkt_lbl).arrange(DOWN, buff=0.04)
+        pkt_grp.move_to(t1.get_left() + LEFT * 0.8)
+
+        self.play(FadeIn(pkt_grp, shift=RIGHT * 0.3), run_time=0.3)
+        self.play(pkt_grp.animate.move_to(t1), run_time=0.3)
+        self.play(pkt_grp.animate.move_to(pq), run_time=0.25)
+        self.play(pkt_grp.animate.move_to(t2), run_time=0.3)
+
+        # Fan out: clone to T3 path and T4 path
+        pkt_t3 = pkt_grp.copy().set_color(ACCENT_SERVER)
+        pkt_t4 = pkt_grp.copy().set_color(ACCENT_ALERT)
+        self.add(pkt_t3, pkt_t4)
+        self.play(
+            pkt_t3.animate.move_to(bq),
+            pkt_t4.animate.move_to(wq),
+            FadeOut(pkt_grp),
+            run_time=0.35,
+        )
+        self.play(
+            pkt_t3.animate.move_to(t3),
+            pkt_t4.animate.move_to(t4),
+            run_time=0.35,
+        )
+        self.play(FadeOut(pkt_t3), FadeOut(pkt_t4), run_time=0.3)
+        self.wait(0.5)
+
+        # ── Key insight: queue isolation ──────────────────────────────────
+        # Flash T4 red to simulate Redis latency
+        t4_flash = SurroundingRectangle(t4, color=ACCENT_ALERT, buff=0.08,
+                                        corner_radius=0.12, stroke_width=3)
+        latency_lbl = Text("Redis slow: 5 ms", font_size=18,
+                           color=ACCENT_ALERT, weight=BOLD)
+        latency_lbl.next_to(t4, RIGHT, buff=0.3)
+
+        t2_ok = SurroundingRectangle(t2, color=HIT_COLOR, buff=0.08,
+                                     corner_radius=0.12, stroke_width=3)
+        ok_lbl = Text("T2 keeps ticking at 20 Hz", font_size=18,
+                       color=HIT_COLOR, weight=BOLD)
+        ok_lbl.next_to(t2, DOWN, buff=0.55)
+
+        self.play(Create(t4_flash), FadeIn(latency_lbl), run_time=0.5)
+        self.play(Create(t2_ok), FadeIn(ok_lbl), run_time=0.5)
+        self.wait(1.5)
+
+        # ── Takeaway callout ──────────────────────────────────────────────
+        takeaway = VGroup(
+            Text("Queues decouple every stage:", font_size=22,
+                 color=TEXT_PRIMARY, weight=BOLD),
+            Text("slow storage never blocks gameplay",
+                 font_size=20, color=HIT_COLOR),
+        ).arrange(DOWN, buff=0.10)
+        tk_bg = RoundedRectangle(
+            corner_radius=0.12,
+            width=takeaway.width + 0.5, height=takeaway.height + 0.35,
+            fill_color=PANEL_FILL, fill_opacity=0.96,
+            stroke_color=HIT_COLOR, stroke_width=1.8,
+        )
+        tk_bg.to_edge(DOWN, buff=0.2)
+        takeaway.move_to(tk_bg)
+        self.play(FadeIn(VGroup(tk_bg, takeaway)), run_time=0.5)
+        self.wait(2.5)
+
+        self.play(FadeOut(VGroup(
+            title, t1, t2, t3, t4, pq, bq, wq,
+            a1, a2, a3, a4, a5, a6,
+            async_lbl, thread_lbl,
+            t4_flash, latency_lbl, t2_ok, ok_lbl,
+            tk_bg, takeaway,
+        )), run_time=0.8)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Storage Tiering — Hot / Warm / Cold with data flow
+# ═══════════════════════════════════════════════════════════════════════════
+
+class StorageTieringScene(Scene):
+    def construct(self):
+        self.camera.background_color = BACKGROUND
+
+        title = Text("Storage Tiers — Hot / Warm / Cold", font_size=40,
+                     color=PYNQ_RED, weight=BOLD)
+        title.to_edge(UP, buff=0.35)
+        self.play(Write(title), run_time=0.8)
+
+        # ── Three tier panels ─────────────────────────────────────────────
+        tier_w, tier_h = 10.5, 1.6
+
+        # --- Redis (Hot) ---
+        redis_box = RoundedRectangle(
+            corner_radius=0.15, width=tier_w, height=tier_h,
+            stroke_color=ACCENT_ALERT, stroke_width=2,
+            fill_color=PANEL_FILL, fill_opacity=0.95,
+        )
+        redis_title = Text("Redis — Hot Tier", font_size=24,
+                           color=ACCENT_ALERT, weight=BOLD)
+        redis_detail = VGroup(
+            Text("In-memory, local to EC2  ·  reads/writes ~0.1 ms",
+                 font_size=16, color=TEXT_MUTED),
+            Text("player:1  player:2  (HSET per tick)  ·  game:seda-events  game:seda-replay",
+                 font_size=14, color=TEXT_DIM),
+        ).arrange(DOWN, buff=0.06, aligned_edge=LEFT)
+        redis_content = VGroup(redis_title, redis_detail).arrange(
+            DOWN, buff=0.12, aligned_edge=LEFT)
+        redis_content.move_to(redis_box).shift(LEFT * 0.3)
+        redis_lbl = Text("~0.1 ms", font_size=18, color=ACCENT_ALERT,
+                         weight=BOLD)
+        redis_lbl.next_to(redis_box, RIGHT, buff=0.2)
+        redis_tier = VGroup(redis_box, redis_content, redis_lbl)
+
+        # --- DynamoDB (Warm) ---
+        ddb_box = RoundedRectangle(
+            corner_radius=0.15, width=tier_w, height=tier_h,
+            stroke_color=ACCENT_HARDWARE, stroke_width=2,
+            fill_color=PANEL_FILL, fill_opacity=0.95,
+        )
+        ddb_title = Text("DynamoDB — Warm Tier", font_size=24,
+                         color=ACCENT_HARDWARE, weight=BOLD)
+        ddb_detail = VGroup(
+            Text("Persistent NoSQL  ·  survives restarts  ·  queryable",
+                 font_size=16, color=TEXT_MUTED),
+            Text("match_id + record_type (META / TAG#1 / TAG#2 ...)"
+                 "  ·  25 recent matches retained",
+                 font_size=14, color=TEXT_DIM),
+        ).arrange(DOWN, buff=0.06, aligned_edge=LEFT)
+        ddb_content = VGroup(ddb_title, ddb_detail).arrange(
+            DOWN, buff=0.12, aligned_edge=LEFT)
+        ddb_content.move_to(ddb_box).shift(LEFT * 0.3)
+        ddb_lbl = Text("10–50 ms", font_size=18, color=ACCENT_HARDWARE,
+                        weight=BOLD)
+        ddb_lbl.next_to(ddb_box, RIGHT, buff=0.2)
+        ddb_tier = VGroup(ddb_box, ddb_content, ddb_lbl)
+
+        # --- S3 (Cold) ---
+        s3_box = RoundedRectangle(
+            corner_radius=0.15, width=tier_w, height=tier_h,
+            stroke_color=ACCENT_STORAGE, stroke_width=2,
+            fill_color=PANEL_FILL, fill_opacity=0.95,
+        )
+        s3_title = Text("S3 — Cold Tier", font_size=24,
+                        color=ACCENT_STORAGE, weight=BOLD)
+        s3_detail = VGroup(
+            Text("Object storage  ·  cheap  ·  indefinite retention",
+                 font_size=16, color=TEXT_MUTED),
+            Text("replays/YYYY/MM/{match_id}.ndjson.gz"
+                 "  ·  ddb-archive/{match_id}.json.gz",
+                 font_size=14, color=TEXT_DIM),
+        ).arrange(DOWN, buff=0.06, aligned_edge=LEFT)
+        s3_content = VGroup(s3_title, s3_detail).arrange(
+            DOWN, buff=0.12, aligned_edge=LEFT)
+        s3_content.move_to(s3_box).shift(LEFT * 0.3)
+        s3_lbl = Text("50–200 ms", font_size=18, color=ACCENT_STORAGE,
+                       weight=BOLD)
+        s3_lbl.next_to(s3_box, RIGHT, buff=0.2)
+        s3_tier = VGroup(s3_box, s3_content, s3_lbl)
+
+        # Stack vertically
+        tiers = VGroup(redis_tier, ddb_tier, s3_tier).arrange(
+            DOWN, buff=0.30)
+        tiers.next_to(title, DOWN, buff=0.40)
+        if tiers.get_bottom()[1] < -3.7:
+            tiers.scale_to_fit_height(6.2).next_to(title, DOWN, buff=0.35)
+
+        # ── Animate tiers appearing ───────────────────────────────────────
+        self.play(FadeIn(redis_tier, shift=RIGHT * 0.2), run_time=0.6)
+        self.wait(0.3)
+        self.play(FadeIn(ddb_tier, shift=RIGHT * 0.2), run_time=0.6)
+        self.wait(0.3)
+        self.play(FadeIn(s3_tier, shift=RIGHT * 0.2), run_time=0.6)
+        self.wait(0.5)
+
+        # ── Down arrows between tiers + sidecar label ─────────────────────
+        arr_kw = dict(buff=0.06, stroke_width=4,
+                      max_tip_length_to_length_ratio=0.12)
+        a_r2d = Arrow(redis_box.get_bottom(), ddb_box.get_top(),
+                      color=ACCENT_HARDWARE, **arr_kw)
+        a_d2s = Arrow(ddb_box.get_bottom(), s3_box.get_top(),
+                      color=ACCENT_STORAGE, **arr_kw)
+
+        sidecar_lbl = Text("sidecar.py (BRPOP)", font_size=15,
+                           color=TEXT_MUTED, slant=ITALIC)
+        sidecar_lbl.next_to(a_r2d, LEFT, buff=0.12)
+
+        evict_lbl = Text("eviction after 25 matches", font_size=15,
+                         color=TEXT_MUTED, slant=ITALIC)
+        evict_lbl.next_to(a_d2s, LEFT, buff=0.12)
+
+        self.play(GrowArrow(a_r2d), FadeIn(sidecar_lbl), run_time=0.5)
+        self.play(GrowArrow(a_d2s), FadeIn(evict_lbl), run_time=0.5)
+        self.wait(2.5)
+
+        self.play(FadeOut(VGroup(
+            title, redis_tier, ddb_tier, s3_tier,
+            a_r2d, a_d2s, sidecar_lbl, evict_lbl,
+        )), run_time=0.8)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# T4 Pipeline Batching — before/after with concrete numbers
+# ═══════════════════════════════════════════════════════════════════════════
+
+class T4BatchingScene(Scene):
+    def construct(self):
+        self.camera.background_color = BACKGROUND
+
+        title = Text("T4 Optimisation — Pipeline Batching", font_size=40,
+                     color=PYNQ_RED, weight=BOLD)
+        title.to_edge(UP, buff=0.35)
+        self.play(Write(title), run_time=0.8)
+
+        # ── Layout: Before on the left, After on the right ────────────────
+        divider = DashedLine([0, -3.5, 0], [0, 2.5, 0],
+                             stroke_color="#1A3050", stroke_width=1.5,
+                             dash_length=0.15)
+
+        before_hdr = Text("Before: N round-trips", font_size=22,
+                          color=ACCENT_ALERT, weight=BOLD)
+        before_hdr.move_to(LEFT * 3.5 + UP * 2.1)
+        after_hdr = Text("After: 1 pipeline call", font_size=22,
+                         color=HIT_COLOR, weight=BOLD)
+        after_hdr.move_to(RIGHT * 3.5 + UP * 2.1)
+
+        self.play(Create(divider), FadeIn(before_hdr), FadeIn(after_hdr),
+                  run_time=0.5)
+
+        # ── Before side: N separate HSET calls ────────────────────────────
+        redis_icon_l = RoundedRectangle(
+            corner_radius=0.12, width=1.6, height=0.7,
+            stroke_color=ACCENT_ALERT, stroke_width=2,
+            fill_color=PANEL_FILL, fill_opacity=0.95,
+        ).move_to(LEFT * 2.0 + DOWN * 0.2)
+        redis_txt_l = Text("Redis", font_size=18, color=ACCENT_ALERT,
+                           weight=BOLD).move_to(redis_icon_l)
+        self.play(FadeIn(VGroup(redis_icon_l, redis_txt_l)), run_time=0.3)
+
+        # Animate N separate calls
+        hset_arrows = VGroup()
+        hset_labels = VGroup()
+        t4_pos_l = LEFT * 5.5 + DOWN * 0.2
+        t4_dot_l = Dot(t4_pos_l, radius=0.12, color=ACCENT_ALERT)
+        t4_lbl_l = Text("T4", font_size=16, color=ACCENT_ALERT,
+                         weight=BOLD).next_to(t4_dot_l, DOWN, buff=0.06)
+        self.play(FadeIn(t4_dot_l), FadeIn(t4_lbl_l), run_time=0.2)
+
+        for i in range(4):
+            y_off = UP * (0.8 - i * 0.5)
+            start = t4_pos_l + y_off + RIGHT * 0.2
+            end = redis_icon_l.get_left() + y_off
+            arr = Arrow(start, end, buff=0.06, stroke_width=2,
+                        color=ACCENT_ALERT,
+                        max_tip_length_to_length_ratio=0.15)
+            lbl = Text(f"HSET player:{i+1}", font_size=12,
+                       color=TEXT_DIM)
+            lbl.next_to(arr, UP, buff=0.02)
+            hset_arrows.add(arr)
+            hset_labels.add(lbl)
+            self.play(GrowArrow(arr), FadeIn(lbl), run_time=0.18)
+
+        # "..." to indicate more
+        dots_l = Text("... N calls", font_size=14,
+                      color=TEXT_DIM).next_to(hset_arrows, DOWN, buff=0.15)
+        self.play(FadeIn(dots_l), run_time=0.2)
+
+        # Latency label
+        lat_before = Text("O(N) round-trips per tick", font_size=16,
+                          color=ACCENT_ALERT)
+        lat_before.next_to(redis_icon_l, DOWN, buff=0.6)
+        self.play(FadeIn(lat_before), run_time=0.3)
+        self.wait(0.8)
+
+        # ── After side: drain queue then 1 pipeline ───────────────────────
+        redis_icon_r = RoundedRectangle(
+            corner_radius=0.12, width=1.6, height=0.7,
+            stroke_color=HIT_COLOR, stroke_width=2,
+            fill_color=PANEL_FILL, fill_opacity=0.95,
+        ).move_to(RIGHT * 5.0 + DOWN * 0.2)
+        redis_txt_r = Text("Redis", font_size=18, color=HIT_COLOR,
+                           weight=BOLD).move_to(redis_icon_r)
+
+        # Queue box
+        q_box = RoundedRectangle(
+            corner_radius=0.10, width=1.8, height=0.65,
+            stroke_color=TEXT_MUTED, stroke_width=1.5,
+            fill_color="#0C1A2C", fill_opacity=0.90,
+        ).move_to(RIGHT * 2.0 + DOWN * 0.2)
+        q_lbl = Text("WriteQueue", font_size=13,
+                      color=TEXT_MUTED).move_to(q_box)
+
+        t4_pos_r = RIGHT * 1.0 + DOWN * 0.2
+        t4_dot_r = Dot(t4_pos_r, radius=0.12, color=HIT_COLOR)
+        t4_lbl_r = Text("T4", font_size=16, color=HIT_COLOR,
+                         weight=BOLD).next_to(t4_dot_r, DOWN, buff=0.06)
+
+        self.play(FadeIn(t4_dot_r), FadeIn(t4_lbl_r),
+                  FadeIn(VGroup(q_box, q_lbl)),
+                  FadeIn(VGroup(redis_icon_r, redis_txt_r)),
+                  run_time=0.4)
+
+        # Step 1: drain queue
+        drain_arr = Arrow(q_box.get_left(), t4_dot_r.get_right(),
+                          buff=0.08, stroke_width=3, color=HIT_COLOR,
+                          max_tip_length_to_length_ratio=0.14)
+        drain_lbl = Text("drain all", font_size=13,
+                         color=TEXT_MUTED).next_to(drain_arr, UP, buff=0.04)
+        self.play(GrowArrow(drain_arr), FadeIn(drain_lbl), run_time=0.3)
+
+        # Step 2: one fat pipeline call
+        pipe_arr = Arrow(q_box.get_right(), redis_icon_r.get_left(),
+                         buff=0.08, stroke_width=5, color=HIT_COLOR,
+                         max_tip_length_to_length_ratio=0.12)
+        pipe_lbl = Text("1 pipeline()", font_size=14, color=HIT_COLOR,
+                         weight=BOLD)
+        pipe_lbl.next_to(pipe_arr, UP, buff=0.06)
+        self.play(GrowArrow(pipe_arr), FadeIn(pipe_lbl), run_time=0.4)
+
+        lat_after = Text("O(1) round-trip per tick", font_size=16,
+                         color=HIT_COLOR)
+        lat_after.next_to(redis_icon_r, DOWN, buff=0.6)
+        self.play(FadeIn(lat_after), run_time=0.3)
+        self.wait(1.0)
+
+        # ── Concrete numbers table ────────────────────────────────────────
+        table_data = [
+            ("",                "2 players\nlocalhost", "2 players\nElastiCache", "10 players\nElastiCache"),
+            ("Old (N trips)",   "~0.1 ms",              "~1 ms",                   "~5 ms"),
+            ("New (1 pipe)",    "~0.05 ms",             "~0.5 ms",                 "~0.5 ms"),
+        ]
+
+        cells = VGroup()
+        cell_w, cell_h = 2.2, 0.7
+        for ri, row in enumerate(table_data):
+            for ci, val in enumerate(row):
+                bg_color = PANEL_FILL
+                if ri == 0:
+                    txt_color = TEXT_PRIMARY
+                    fw = BOLD
+                elif ri == 1:
+                    txt_color = ACCENT_ALERT
+                    fw = NORMAL
+                else:
+                    txt_color = HIT_COLOR
+                    fw = BOLD
+                rect = Rectangle(
+                    width=cell_w, height=cell_h,
+                    stroke_color="#2A4060", stroke_width=1,
+                    fill_color=bg_color, fill_opacity=0.90,
+                )
+                txt = Text(val, font_size=14, color=txt_color, weight=fw)
+                txt.move_to(rect)
+                cell = VGroup(rect, txt)
+                cell.move_to([
+                    (ci - 1.5) * cell_w,
+                    -(ri - 1) * cell_h,
+                    0,
+                ])
+                cells.add(cell)
+
+        cells.move_to(DOWN * 2.6)
+        if cells.get_width() > 12.5:
+            cells.scale_to_fit_width(12.5)
+
+        self.play(FadeIn(cells, lag_ratio=0.02), run_time=0.8)
+        self.wait(3.0)
+
+        self.play(FadeOut(VGroup(
+            title, divider, before_hdr, after_hdr,
+            redis_icon_l, redis_txt_l, t4_dot_l, t4_lbl_l,
+            hset_arrows, hset_labels, dots_l, lat_before,
+            redis_icon_r, redis_txt_r, t4_dot_r, t4_lbl_r,
+            q_box, q_lbl, drain_arr, drain_lbl,
+            pipe_arr, pipe_lbl, lat_after,
+            cells,
+        )), run_time=0.8)
     def construct(self):
         self.camera.background_color = BACKGROUND
 
