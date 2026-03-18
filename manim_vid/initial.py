@@ -230,14 +230,16 @@ class GridMapScene(Scene):
         world_map = ALGO_WORLD_MAP
         map_rows  = len(world_map)
         map_cols  = len(world_map[0])
-        grid_group = make_world_grid(world_map, cell_size=0.65)
+        cell_size = 0.65
+        grid_group = make_world_grid(world_map, cell_size=cell_size)
         grid_group.shift(DOWN * 0.25)
 
         self.play(FadeIn(grid_group, lag_ratio=0.01), run_time=1.4)
         self.wait(0.4)
 
-        wall_swatch  = Square(0.3,  stroke_width=0).set_fill(WALL_COLOR,  opacity=0.92)
-        empty_swatch = Square(0.3,  stroke_width=0).set_fill(EMPTY_COLOR, opacity=0.85)
+        # ── Legend ────────────────────────────────────────────────────────
+        wall_swatch  = Square(0.3, stroke_width=0).set_fill(WALL_COLOR, opacity=0.92)
+        empty_swatch = Square(0.3, stroke_width=0).set_fill(EMPTY_COLOR, opacity=0.85)
         wall_label   = Text("Wall (1)",  font_size=22, color=TEXT_PRIMARY)
         empty_label  = Text("Empty (0)", font_size=22, color=TEXT_MUTED)
         legend = VGroup(
@@ -253,15 +255,145 @@ class GridMapScene(Scene):
         )
         bram_text.next_to(legend, DOWN, buff=0.38)
         self.play(FadeIn(bram_text, shift=UP * 0.2), run_time=0.8)
+        self.wait(0.8)
 
-        player_world = grid_cell_center(grid_group, 5, 2, map_cols)
-        player_dot   = Dot(player_world, radius=0.13, color=PLAYER_A_COLOR, z_index=5)
-        player_label = Text("Player", font_size=20, color=PLAYER_A_COLOR)
-        player_label.next_to(player_dot, LEFT, buff=0.22)
+        # ── Players ───────────────────────────────────────────────────────
+        # Player A (red) and Player B (blue) at different positions
+        pos_a = grid_cell_center(grid_group, 5, 2, map_cols)
+        pos_b = grid_cell_center(grid_group, 1, 5, map_cols)
 
-        self.play(FadeIn(player_dot, scale=0.5), FadeIn(player_label), run_time=0.7)
-        self.wait(2.2)
-        self.play(FadeOut(VGroup(section, grid_group, legend, bram_text, player_dot, player_label)), run_time=0.8)
+        player_a = Dot(pos_a, radius=0.14, color=PLAYER_A_COLOR, z_index=5)
+        player_b = Dot(pos_b, radius=0.14, color=PLAYER_B_COLOR, z_index=5)
+        lbl_a = Text("Player A", font_size=18, color=PLAYER_A_COLOR)
+        lbl_a.next_to(player_a, LEFT, buff=0.18)
+        lbl_b = Text("Player B", font_size=18, color=PLAYER_B_COLOR)
+        lbl_b.next_to(player_b, RIGHT, buff=0.18)
+
+        self.play(FadeIn(player_a, scale=0.5), FadeIn(lbl_a), run_time=0.5)
+        self.play(FadeIn(player_b, scale=0.5), FadeIn(lbl_b), run_time=0.5)
+        self.wait(0.5)
+
+        # ── Ghosts (AI-controlled, like pac-man) ─────────────────────────
+        GHOST_COLOR = "#BB66FF"
+        ghost_positions = [
+            grid_cell_center(grid_group, 1, 1, map_cols),
+            grid_cell_center(grid_group, 5, 5, map_cols),
+        ]
+        ghosts = VGroup()
+        ghost_lbls = VGroup()
+        for i, gp in enumerate(ghost_positions):
+            # Simple ghost shape: circle + three bumps at the bottom
+            body = Circle(radius=0.18, fill_color=GHOST_COLOR,
+                          fill_opacity=0.85, stroke_width=0, z_index=5)
+            body.move_to(gp + UP * 0.04)
+            # Eyes
+            eye_l = Dot(gp + np.array([-0.07, 0.08, 0]), radius=0.04,
+                        color=WHITE, z_index=6)
+            eye_r = Dot(gp + np.array([0.07, 0.08, 0]), radius=0.04,
+                        color=WHITE, z_index=6)
+            pupil_l = Dot(gp + np.array([-0.05, 0.08, 0]), radius=0.02,
+                          color="#222244", z_index=7)
+            pupil_r = Dot(gp + np.array([0.09, 0.08, 0]), radius=0.02,
+                          color="#222244", z_index=7)
+            ghost = VGroup(body, eye_l, eye_r, pupil_l, pupil_r)
+            ghosts.add(ghost)
+
+        ghost_lbl = Text("Ghosts (AI)", font_size=18, color=GHOST_COLOR)
+        ghost_lbl.next_to(ghosts[0], UP, buff=0.20)
+
+        self.play(
+            *[FadeIn(g, scale=0.5) for g in ghosts],
+            FadeIn(ghost_lbl),
+            run_time=0.6,
+        )
+        self.wait(0.6)
+
+        # ── Animate movement: players walk, ghosts chase ──────────────────
+        # Player A moves right then up
+        pa_wp1 = grid_cell_center(grid_group, 5, 4, map_cols)
+        pa_wp2 = grid_cell_center(grid_group, 4, 4, map_cols)
+        pa_wp3 = grid_cell_center(grid_group, 3, 4, map_cols)
+
+        # Player B moves left
+        pb_wp1 = grid_cell_center(grid_group, 1, 3, map_cols)
+        pb_wp2 = grid_cell_center(grid_group, 1, 2, map_cols)
+
+        # Ghost 0 chases Player B (moves right)
+        g0_wp1 = grid_cell_center(grid_group, 1, 2, map_cols)
+
+        # Ghost 1 chases Player A (moves left then up)
+        g1_wp1 = grid_cell_center(grid_group, 5, 4, map_cols)
+        g1_wp2 = grid_cell_center(grid_group, 4, 4, map_cols)
+
+        # Step 1: everyone moves
+        self.play(
+            player_a.animate.move_to(pa_wp1),
+            lbl_a.animate.move_to(pa_wp1 + LEFT * 0.7),
+            player_b.animate.move_to(pb_wp1),
+            lbl_b.animate.move_to(pb_wp1 + RIGHT * 0.7),
+            ghosts[1].animate.move_to(g1_wp1),
+            run_time=0.6,
+        )
+        # Step 2
+        self.play(
+            player_a.animate.move_to(pa_wp2),
+            lbl_a.animate.move_to(pa_wp2 + LEFT * 0.7),
+            player_b.animate.move_to(pb_wp2),
+            lbl_b.animate.move_to(pb_wp2 + RIGHT * 0.7),
+            ghosts[0].animate.move_to(g0_wp1),
+            ghost_lbl.animate.move_to(g0_wp1 + UP * 0.35),
+            run_time=0.6,
+        )
+        # Step 3: Player A keeps going, ghost catches up
+        self.play(
+            player_a.animate.move_to(pa_wp3),
+            lbl_a.animate.move_to(pa_wp3 + LEFT * 0.7),
+            ghosts[1].animate.move_to(g1_wp2),
+            run_time=0.6,
+        )
+        self.wait(0.5)
+
+        # ── Entity legend at the bottom ───────────────────────────────────
+        # Fade out the wall/empty legend and replace with entity legend
+        self.play(FadeOut(legend), FadeOut(bram_text), run_time=0.3)
+
+        ent_legend = VGroup(
+            VGroup(
+                Dot(radius=0.09, color=PLAYER_A_COLOR),
+                Text("Player A", font_size=18, color=PLAYER_A_COLOR),
+            ).arrange(RIGHT, buff=0.10),
+            VGroup(
+                Dot(radius=0.09, color=PLAYER_B_COLOR),
+                Text("Player B", font_size=18, color=PLAYER_B_COLOR),
+            ).arrange(RIGHT, buff=0.10),
+            VGroup(
+                Circle(radius=0.09, fill_color=GHOST_COLOR,
+                       fill_opacity=0.85, stroke_width=0),
+                Text("Ghost (AI)", font_size=18, color=GHOST_COLOR),
+            ).arrange(RIGHT, buff=0.10),
+        ).arrange(RIGHT, buff=0.7)
+        ent_legend.next_to(grid_group, DOWN, buff=0.35)
+
+        caption = Text(
+            "Players navigate the map — ghosts hunt using A* pathfinding",
+            font_size=20, color=TEXT_MUTED,
+        )
+        caption.next_to(ent_legend, DOWN, buff=0.18)
+
+        # Clamp to screen bottom if needed
+        if caption.get_bottom()[1] < -3.8:
+            VGroup(ent_legend, caption).to_edge(DOWN, buff=0.12)
+
+        self.play(FadeIn(ent_legend), FadeIn(caption, shift=UP * 0.15),
+                  run_time=0.6)
+        self.wait(2.5)
+
+        self.play(FadeOut(VGroup(
+            section, grid_group,
+            player_a, player_b, lbl_a, lbl_b,
+            ghosts, ghost_lbl,
+            ent_legend, caption,
+        )), run_time=0.8)
 
 
 class DDAScene(Scene):
@@ -1210,12 +1342,18 @@ class FPGAParallelScene(Scene):
     def construct(self):
         self.camera.background_color = BACKGROUND
 
-        section = Text("4. FPGA Hardware Acceleration", font_size=42, color=PYNQ_RED, weight=BOLD)
+        section = Text("4. FPGA Hardware Acceleration", font_size=42,
+                       color=PYNQ_RED, weight=BOLD)
         section.to_edge(UP, buff=0.4)
         self.play(Write(section), run_time=0.8)
 
-        cpu_label  = Text("CPU  —  Sequential", font_size=26, weight=BOLD, color="#5599FF")
-        fpga_label = Text("FPGA  —  Parallel",  font_size=26, weight=BOLD, color=PYNQ_RED)
+        # ==================================================================
+        # PART 1 — CPU sequential vs FPGA parallel column rendering
+        # ==================================================================
+        cpu_label  = Text("CPU  —  Sequential", font_size=26, weight=BOLD,
+                          color="#5599FF")
+        fpga_label = Text("FPGA  —  Parallel",  font_size=26, weight=BOLD,
+                          color=PYNQ_RED)
         cpu_label.move_to(LEFT * 3.2 + UP * 1.9)
         fpga_label.move_to(RIGHT * 3.2 + UP * 1.9)
         self.play(FadeIn(cpu_label), FadeIn(fpga_label), run_time=0.5)
@@ -1226,12 +1364,15 @@ class FPGAParallelScene(Scene):
         fpga_cols = VGroup()
 
         for index in range(num_cols):
-            def make_col(x_centre):
+            def make_col(x_centre, idx=index):
                 return Rectangle(
                     width=col_w, height=2.0,
                     fill_color=GREY_D, fill_opacity=0.3,
                     stroke_color="#2A4060", stroke_width=0.8,
-                ).move_to(np.array([x_centre + (index - num_cols / 2 + 0.5) * col_w, -0.3, 0]))
+                ).move_to(np.array([
+                    x_centre + (idx - num_cols / 2 + 0.5) * col_w,
+                    -0.3, 0
+                ]))
             cpu_cols.add(make_col(-3.2))
             fpga_cols.add(make_col(3.2))
 
@@ -1239,26 +1380,266 @@ class FPGAParallelScene(Scene):
 
         # CPU fills one column at a time
         for index in range(num_cols):
-            self.play(cpu_cols[index].animate.set_fill(color="#5599FF", opacity=0.85), run_time=0.1)
+            self.play(cpu_cols[index].animate.set_fill(
+                color="#5599FF", opacity=0.85), run_time=0.1)
 
         # FPGA fills all at once
         self.play(
-            *[fpga_cols[i].animate.set_fill(color=PYNQ_RED, opacity=0.85) for i in range(num_cols)],
+            *[fpga_cols[i].animate.set_fill(
+                color=PYNQ_RED, opacity=0.85) for i in range(num_cols)],
             run_time=0.45,
         )
 
-        hw_text = VGroup(
-            Text("Why DDA maps perfectly to hardware:", font_size=24, color=TEXT_PRIMARY, weight=BOLD),
-            Text("Only additions and comparisons — no multiply/divide",  font_size=22, color=TEXT_MUTED),
-            Text("Each ray is fully independent — trivially parallelisable", font_size=22, color=TEXT_MUTED),
-            Text("Map stored in BRAM — zero off-chip memory latency",    font_size=22, color=TEXT_MUTED),
-            Text("Wall-height division done in a single LUT stage",       font_size=22, color=TEXT_MUTED),
-        ).arrange(DOWN, aligned_edge=LEFT, buff=0.22)
-        hw_text.to_edge(DOWN, buff=0.45)
+        # Brief note
+        par_note = Text("Each ray is independent — all 320 columns "
+                        "can be computed in parallel",
+                        font_size=20, color=TEXT_MUTED)
+        par_note.to_edge(DOWN, buff=0.5)
+        self.play(FadeIn(par_note, shift=UP * 0.15), run_time=0.5)
+        self.wait(2.0)
 
-        self.play(FadeIn(hw_text, shift=UP * 0.3, lag_ratio=0.1), run_time=1.4)
-        self.wait(2.8)
-        self.play(FadeOut(VGroup(section, cpu_label, fpga_label, cpu_cols, fpga_cols, hw_text)), run_time=0.8)
+        # Fade part 1
+        self.play(FadeOut(VGroup(
+            cpu_label, fpga_label, cpu_cols, fpga_cols, par_note,
+        )), run_time=0.6)
+
+        # ==================================================================
+        # PART 2 — PYNQ-Z1 SoC Architecture block diagram
+        # ==================================================================
+        soc_hdr = Text("PYNQ-Z1 SoC Architecture", font_size=30,
+                       color=TEXT_PRIMARY, weight=BOLD)
+        soc_hdr.next_to(section, DOWN, buff=0.30)
+        self.play(FadeIn(soc_hdr, shift=UP * 0.15), run_time=0.5)
+
+        # ── Helper for SoC blocks ─────────────────────────────────────────
+        def soc_block(label, sub, w, h, accent):
+            box = RoundedRectangle(
+                corner_radius=0.12, width=w, height=h,
+                stroke_color=accent, stroke_width=2,
+                fill_color=PANEL_FILL, fill_opacity=0.95,
+            )
+            t = Text(label, font_size=18, color=TEXT_PRIMARY, weight=BOLD)
+            s = Text(sub, font_size=13, color=TEXT_MUTED)
+            VGroup(t, s).arrange(DOWN, buff=0.06).move_to(box)
+            return VGroup(box, t, s)
+
+        # ── PL side (left) ────────────────────────────────────────────────
+        pl_region = RoundedRectangle(
+            corner_radius=0.18, width=5.5, height=4.0,
+            stroke_color=PYNQ_RED, stroke_width=1.5,
+            fill_color="#0A1520", fill_opacity=0.5,
+        ).move_to(LEFT * 3.2 + DOWN * 0.6)
+        pl_title = Text("PL (FPGA Fabric)", font_size=20,
+                        color=PYNQ_RED, weight=BOLD)
+        pl_title.next_to(pl_region, UP, buff=0.08)
+
+        raycaster = soc_block("Raycaster IP", "DDA Engine",
+                              2.2, 0.9, PYNQ_RED)
+        raycaster.move_to(LEFT * 4.2 + UP * 0.2)
+
+        bram = soc_block("BRAM", "Map + State",
+                         1.6, 0.9, ACCENT_HARDWARE)
+        bram.move_to(LEFT * 1.8 + UP * 0.2)
+
+        hdmi = soc_block("HDMI Controller", "Pixel Output",
+                         2.2, 0.8, PYNQ_RED)
+        hdmi.move_to(LEFT * 4.2 + DOWN * 1.4)
+
+        # ── PS side (right) ───────────────────────────────────────────────
+        ps_region = RoundedRectangle(
+            corner_radius=0.18, width=4.5, height=4.0,
+            stroke_color=ACCENT_SERVER, stroke_width=1.5,
+            fill_color="#0A1520", fill_opacity=0.5,
+        ).move_to(RIGHT * 3.5 + DOWN * 0.6)
+        ps_title = Text("PS (ARM Cortex-A9)", font_size=20,
+                        color=ACCENT_SERVER, weight=BOLD)
+        ps_title.next_to(ps_region, UP, buff=0.08)
+
+        gameloop = soc_block("Game Loop", "Python",
+                             2.0, 0.9, ACCENT_SERVER)
+        gameloop.move_to(RIGHT * 3.5 + UP * 0.2)
+
+        gpio = soc_block("AXI GPIO", "Buttons",
+                         2.0, 0.8, ACCENT_SERVER)
+        gpio.move_to(RIGHT * 3.5 + DOWN * 1.4)
+
+        # ── Connections ───────────────────────────────────────────────────
+        arr_kw = dict(buff=0.08, stroke_width=3,
+                      max_tip_length_to_length_ratio=0.12)
+
+        # Raycaster reads from BRAM
+        a_rc_bram = Arrow(bram.get_left(), raycaster.get_right(),
+                          color=ACCENT_HARDWARE, **arr_kw)
+        a_rc_bram_lbl = Text("Read", font_size=13,
+                             color=ACCENT_HARDWARE)
+        a_rc_bram_lbl.next_to(a_rc_bram, UP, buff=0.04)
+
+        # Raycaster outputs pixels to HDMI
+        a_rc_hdmi = Arrow(raycaster.get_bottom(), hdmi.get_top(),
+                          color=PYNQ_RED, **arr_kw)
+        a_rc_hdmi_lbl = Text("Pixels", font_size=13, color=PYNQ_RED)
+        a_rc_hdmi_lbl.next_to(a_rc_hdmi, LEFT, buff=0.04)
+
+        # PS writes to BRAM via AXI
+        a_ps_bram = Arrow(gameloop.get_left(), bram.get_right(),
+                          color=ACCENT_SERVER, **arr_kw)
+        a_ps_bram_lbl = Text("AXI", font_size=14,
+                             color=ACCENT_SERVER, weight=BOLD)
+        a_ps_bram_lbl.next_to(a_ps_bram, UP, buff=0.04)
+
+        # GPIO to game loop
+        a_gpio = Arrow(gpio.get_top(), gameloop.get_bottom(),
+                       color=ACCENT_SERVER, **arr_kw)
+        a_gpio_lbl = Text("BTN0-3", font_size=13, color=ACCENT_SERVER)
+        a_gpio_lbl.next_to(a_gpio, RIGHT, buff=0.04)
+
+        # ── Animate build ─────────────────────────────────────────────────
+        self.play(
+            FadeIn(pl_region), FadeIn(pl_title),
+            FadeIn(ps_region), FadeIn(ps_title),
+            run_time=0.5,
+        )
+        self.play(
+            FadeIn(raycaster, shift=RIGHT * 0.15),
+            FadeIn(bram, shift=LEFT * 0.15),
+            FadeIn(hdmi, shift=UP * 0.15),
+            run_time=0.5,
+        )
+        self.play(
+            FadeIn(gameloop, shift=LEFT * 0.15),
+            FadeIn(gpio, shift=UP * 0.15),
+            run_time=0.5,
+        )
+        self.play(
+            GrowArrow(a_rc_bram), FadeIn(a_rc_bram_lbl),
+            GrowArrow(a_rc_hdmi), FadeIn(a_rc_hdmi_lbl),
+            GrowArrow(a_ps_bram), FadeIn(a_ps_bram_lbl),
+            GrowArrow(a_gpio),    FadeIn(a_gpio_lbl),
+            run_time=0.6,
+        )
+        self.wait(0.5)
+
+        # ── Animate data flow: PS writes → BRAM → Raycaster → HDMI ───────
+        flow_dot = Dot(radius=0.10, color=ACCENT_HARDWARE, z_index=15)
+        flow_lbl = Text("pos, angle, map", font_size=12,
+                        color=ACCENT_HARDWARE)
+        flow_grp = VGroup(flow_dot, flow_lbl).arrange(DOWN, buff=0.04)
+        flow_grp.move_to(gameloop)
+
+        self.play(FadeIn(flow_grp, scale=0.5), run_time=0.3)
+        self.play(flow_grp.animate.move_to(bram), run_time=0.4)
+        self.play(flow_grp.animate.move_to(raycaster), run_time=0.4)
+        flow_lbl2 = Text("pixels", font_size=12, color=PYNQ_RED)
+        flow_lbl2.next_to(flow_dot, DOWN, buff=0.04)
+        self.play(
+            Transform(flow_lbl, flow_lbl2),
+            flow_grp.animate.move_to(hdmi),
+            run_time=0.4,
+        )
+        self.play(FadeOut(flow_grp), run_time=0.3)
+        self.wait(0.5)
+
+        # ── Caption ───────────────────────────────────────────────────────
+        soc_caption = Text(
+            "PS writes game state to BRAM each tick — "
+            "PL renders the next frame independently",
+            font_size=18, color=TEXT_MUTED,
+        )
+        soc_caption.to_edge(DOWN, buff=0.15)
+        self.play(FadeIn(soc_caption, shift=UP * 0.1), run_time=0.4)
+        self.wait(2.0)
+
+        # Fade part 2
+        soc_all = VGroup(
+            soc_hdr,
+            pl_region, pl_title, ps_region, ps_title,
+            raycaster, bram, hdmi, gameloop, gpio,
+            a_rc_bram, a_rc_bram_lbl, a_rc_hdmi, a_rc_hdmi_lbl,
+            a_ps_bram, a_ps_bram_lbl, a_gpio, a_gpio_lbl,
+            soc_caption,
+        )
+        self.play(FadeOut(soc_all), run_time=0.6)
+
+        # ==================================================================
+        # PART 3 — Pipeline timing calculation
+        # ==================================================================
+        timing_hdr = Text("Raycaster Pipeline Timing", font_size=30,
+                          color=TEXT_PRIMARY, weight=BOLD)
+        timing_hdr.next_to(section, DOWN, buff=0.30)
+        self.play(FadeIn(timing_hdr, shift=UP * 0.15), run_time=0.5)
+
+        # ── Pipeline stages diagram ───────────────────────────────────────
+        pipe_stages = ["DDA\nStepping", "Wall\nHeight", "Texture\nLookup",
+                       "Pixel\nOutput"]
+        pipe_colors = [PYNQ_RED, ACCENT_HARDWARE, ACCENT_STORAGE,
+                       ACCENT_SERVER]
+        pipe_boxes = VGroup()
+        for label, color in zip(pipe_stages, pipe_colors):
+            box = RoundedRectangle(
+                corner_radius=0.10, width=2.2, height=1.1,
+                stroke_color=color, stroke_width=2,
+                fill_color=PANEL_FILL, fill_opacity=0.95,
+            )
+            txt = Text(label, font_size=16, color=color, weight=BOLD)
+            txt.move_to(box)
+            pipe_boxes.add(VGroup(box, txt))
+        pipe_boxes.arrange(RIGHT, buff=0.35).move_to(UP * 0.3)
+
+        pipe_arrows = VGroup()
+        for i in range(len(pipe_boxes) - 1):
+            pipe_arrows.add(Arrow(
+                pipe_boxes[i].get_right(), pipe_boxes[i + 1].get_left(),
+                buff=0.06, stroke_width=3, color=TEXT_MUTED,
+                max_tip_length_to_length_ratio=0.14,
+            ))
+
+        self.play(
+            LaggedStart(
+                *[FadeIn(b, shift=RIGHT * 0.15) for b in pipe_boxes],
+                lag_ratio=0.12,
+            ),
+            run_time=0.8,
+        )
+        self.play(FadeIn(pipe_arrows, lag_ratio=0.15), run_time=0.5)
+
+        pipe_note = Text("Free-running pipeline: one column per clock "
+                         "cycle after initial fill",
+                         font_size=18, color=TEXT_MUTED)
+        pipe_note.next_to(pipe_boxes, DOWN, buff=0.30)
+        self.play(FadeIn(pipe_note, shift=UP * 0.1), run_time=0.4)
+        self.wait(1.5)
+
+        # ── Timing numbers ────────────────────────────────────────────────
+        timing_lines = VGroup(
+            Text("t_col  = ray_steps_max / f_clk  "
+                 "= 64 / 100 MHz  = 0.64 μs",
+                 font_size=20, color=TEXT_PRIMARY),
+            Text("t_frame = 320 × 0.64 μs  ≈  205 μs",
+                 font_size=20, color=TEXT_PRIMARY),
+            Text("Budget for 60 fps  =  16.7 ms  "
+                 "→  81× headroom",
+                 font_size=20, color=HIT_COLOR, weight=BOLD),
+        ).arrange(DOWN, buff=0.14, aligned_edge=LEFT)
+
+        timing_bg = RoundedRectangle(
+            corner_radius=0.10,
+            width=timing_lines.width + 0.5,
+            height=timing_lines.height + 0.3,
+            fill_color=PANEL_FILL, fill_opacity=0.96,
+            stroke_color=ACCENT_SERVER, stroke_width=1.5,
+        )
+        timing_bg.to_edge(DOWN, buff=0.12)
+        timing_lines.move_to(timing_bg)
+
+        self.play(FadeIn(VGroup(timing_bg, timing_lines)), run_time=0.6)
+        self.wait(3.5)
+
+        # ── Final fade ────────────────────────────────────────────────────
+        self.play(FadeOut(VGroup(
+            section, timing_hdr,
+            pipe_boxes, pipe_arrows, pipe_note,
+            timing_bg, timing_lines,
+        )), run_time=0.8)
 
 
 class MultiplayerScene(Scene):
@@ -1581,12 +1962,13 @@ class SEDADeepDiveScene(Scene):
             VGroup(t, s).arrange(DOWN, buff=0.10).move_to(box)
             stages.add(VGroup(box, t, s))
 
-        # T1 → T2 horizontal, then T2 fans down to T3 and T4
+        # T1 → PQ → T2 horizontal, then T2 fans to BQ → T3 (upper right)
+        #                                  and WQ → T4 (lower right)
         t1, t2, t3, t4 = stages
-        t1.move_to(LEFT * 5 + UP * 0.8)
-        t2.move_to(LEFT * 1.5 + UP * 0.8)
-        t3.move_to(RIGHT * 2.5 + UP * 2.0)
-        t4.move_to(RIGHT * 2.5 + DOWN * 0.4)
+        t1.move_to(LEFT * 5.5 + UP * 0.5)
+        t2.move_to(LEFT * 0.8 + UP * 0.5)
+        t3.move_to(RIGHT * 4.5 + UP * 2.0)
+        t4.move_to(RIGHT * 4.5 + DOWN * 1.0)
 
         # ── Queue boxes (dashed border) ───────────────────────────────────
         def make_queue(label_str, width=1.8):
@@ -1603,19 +1985,19 @@ class SEDADeepDiveScene(Scene):
         pq = make_queue("PacketQueue")
         pq.move_to((t1.get_right() + t2.get_left()) / 2)
         bq = make_queue("BroadcastQueue")
-        bq.move_to((t2.get_right() + t3.get_left()) / 2 + UP * 0.6)
+        bq.move_to(RIGHT * 2.0 + UP * 2.0)
         wq = make_queue("WriteQueue")
-        wq.move_to((t2.get_right() + t4.get_left()) / 2 + DOWN * 0.3)
+        wq.move_to(RIGHT * 2.0 + DOWN * 1.0)
 
         # ── Arrows ────────────────────────────────────────────────────────
         arr_kw = dict(buff=0.08, stroke_width=3,
                       max_tip_length_to_length_ratio=0.14)
         a1 = Arrow(t1.get_right(), pq.get_left(), color=ACCENT_SERVER, **arr_kw)
         a2 = Arrow(pq.get_right(), t2.get_left(), color=ACCENT_SERVER, **arr_kw)
-        a3 = Arrow(t2.get_top() + RIGHT * 0.3, bq.get_left(),
+        a3 = Arrow(t2.get_right() + UP * 0.3, bq.get_left(),
                    color=ACCENT_SERVER, **arr_kw)
         a4 = Arrow(bq.get_right(), t3.get_left(), color=ACCENT_SERVER, **arr_kw)
-        a5 = Arrow(t2.get_bottom() + RIGHT * 0.3, wq.get_left(),
+        a5 = Arrow(t2.get_right() + DOWN * 0.3, wq.get_left(),
                    color=ACCENT_ALERT, **arr_kw)
         a6 = Arrow(wq.get_right(), t4.get_left(), color=ACCENT_ALERT, **arr_kw)
 
@@ -1638,10 +2020,10 @@ class SEDADeepDiveScene(Scene):
         # ── Asyncio vs Thread swim-lane labels ────────────────────────────
         async_lbl = Text("asyncio event loop (single thread, no locks)",
                          font_size=16, color=ACCENT_SERVER, slant=ITALIC)
-        async_lbl.next_to(t1, UP, buff=0.22).shift(RIGHT * 1.5)
+        async_lbl.next_to(t1, UP, buff=0.25).shift(RIGHT * 2.0)
         thread_lbl = Text("OS thread (absorbs Redis latency)",
                           font_size=16, color=ACCENT_ALERT, slant=ITALIC)
-        thread_lbl.next_to(t4, DOWN, buff=0.22)
+        thread_lbl.next_to(t4, DOWN, buff=0.25)
         self.play(FadeIn(async_lbl), FadeIn(thread_lbl), run_time=0.5)
         self.wait(0.6)
 
@@ -1680,7 +2062,7 @@ class SEDADeepDiveScene(Scene):
                                         corner_radius=0.12, stroke_width=3)
         latency_lbl = Text("Redis slow: 5 ms", font_size=18,
                            color=ACCENT_ALERT, weight=BOLD)
-        latency_lbl.next_to(t4, RIGHT, buff=0.3)
+        latency_lbl.next_to(t4, UP, buff=0.15)
 
         t2_ok = SurroundingRectangle(t2, color=HIT_COLOR, buff=0.08,
                                      corner_radius=0.12, stroke_width=3)
@@ -2020,6 +2402,393 @@ class T4BatchingScene(Scene):
             pipe_arr, pipe_lbl, lat_after,
             cells,
         )), run_time=0.8)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Packet Protocol — 24-byte fixed binary frame
+# ═══════════════════════════════════════════════════════════════════════════
+
+class PacketProtocolScene(Scene):
+    def construct(self):
+        self.camera.background_color = BACKGROUND
+
+        title = Text("UDP Packet Protocol — 24-Byte Fixed Frame",
+                     font_size=38, color=PYNQ_RED, weight=BOLD)
+        title.to_edge(UP, buff=0.35)
+        self.play(Write(title), run_time=0.8)
+
+        # ── Packet field definitions ──────────────────────────────────────
+        # (name, type, bytes, colour)
+        fields = [
+            ("node_id", "u16",  2, "#FF6B6B"),   # red - identity
+            ("seq",     "u16",  2, "#FF6B6B"),
+            ("tick",    "u32",  4, "#F7A541"),   # orange - timing
+            ("x",       "f32",  4, "#58C4DD"),   # cyan - position
+            ("y",       "f32",  4, "#58C4DD"),
+            ("angle",   "f32",  4, "#58C4DD"),
+            ("flags",   "u8",   1, "#7BD88F"),   # green - state
+            ("pad",     "3B",   3, "#5A6A7A"),   # grey - alignment
+        ]
+
+        total_bytes = sum(f[2] for f in fields)
+
+        # ── Build the byte-strip diagram ──────────────────────────────────
+        strip_w = 11.0
+        strip_h = 0.9
+        strip_y = 1.3
+        px_per_byte = strip_w / total_bytes
+
+        field_rects = VGroup()
+        field_labels = VGroup()
+        type_labels = VGroup()
+        byte_offsets = VGroup()
+
+        x_cursor = -strip_w / 2
+        byte_cursor = 0
+
+        for name, dtype, nbytes, color in fields:
+            w = px_per_byte * nbytes
+            rect = Rectangle(
+                width=w, height=strip_h,
+                fill_color=color, fill_opacity=0.25,
+                stroke_color=color, stroke_width=2,
+            )
+            rect.move_to([x_cursor + w / 2, strip_y, 0])
+
+            nlbl = Text(name, font_size=15, color=WHITE, weight=BOLD)
+            nlbl.move_to(rect.get_center() + UP * 0.12)
+            tlbl = Text(dtype, font_size=12, color=color)
+            tlbl.move_to(rect.get_center() + DOWN * 0.18)
+
+            # Byte offset marker at the left edge
+            off = Text(str(byte_cursor), font_size=11, color=TEXT_DIM)
+            off.move_to([x_cursor, strip_y + strip_h / 2 + 0.18, 0])
+
+            field_rects.add(rect)
+            field_labels.add(nlbl)
+            type_labels.add(tlbl)
+            byte_offsets.add(off)
+
+            x_cursor += w
+            byte_cursor += nbytes
+
+        # Final byte offset (24)
+        off_end = Text(str(total_bytes), font_size=11, color=TEXT_DIM)
+        off_end.move_to([x_cursor, strip_y + strip_h / 2 + 0.18, 0])
+        byte_offsets.add(off_end)
+
+        # Group labels for the field categories
+        cat_id = Text("Identity", font_size=14, color="#FF6B6B")
+        cat_id.move_to([-strip_w / 2 + px_per_byte * 2, strip_y - 0.7, 0])
+        cat_time = Text("Timing", font_size=14, color="#F7A541")
+        cat_time.move_to([-strip_w / 2 + px_per_byte * 6, strip_y - 0.7, 0])
+        cat_pos = Text("Position + Rotation", font_size=14, color="#58C4DD")
+        cat_pos.move_to([px_per_byte * 2, strip_y - 0.7, 0])
+        cat_state = Text("State", font_size=14, color="#7BD88F")
+        cat_state.move_to([strip_w / 2 - px_per_byte * 3, strip_y - 0.7, 0])
+
+        # ── Animate packet building field by field ────────────────────────
+        self.play(FadeIn(byte_offsets, lag_ratio=0.05), run_time=0.4)
+        for i in range(len(fields)):
+            self.play(
+                FadeIn(field_rects[i], scale=0.9),
+                FadeIn(field_labels[i]),
+                FadeIn(type_labels[i]),
+                run_time=0.18,
+            )
+        self.play(
+            FadeIn(cat_id), FadeIn(cat_time),
+            FadeIn(cat_pos), FadeIn(cat_state),
+            run_time=0.5,
+        )
+        self.wait(0.8)
+
+        # ── struct.pack line ──────────────────────────────────────────────
+        code_bg = RoundedRectangle(
+            corner_radius=0.10, width=11.5, height=0.65,
+            fill_color="#0D1B2A", fill_opacity=0.95,
+            stroke_color="#2A4060", stroke_width=1.5,
+        ).move_to([0, -0.2, 0])
+        code_txt = Text(
+            "struct.pack('<HHIfffB3x', node_id, seq, tick, x, y, angle, flags)",
+            font_size=16, color=TEXT_PRIMARY,
+        )
+        code_txt.move_to(code_bg)
+        self.play(FadeIn(code_bg), FadeIn(code_txt), run_time=0.5)
+        self.wait(0.8)
+
+        # ── Animate packet flying: PYNQ → EC2 → all PYNQs ───────────────
+        pynq_box = RoundedRectangle(
+            corner_radius=0.10, width=1.8, height=0.7,
+            stroke_color=ACCENT_HARDWARE, stroke_width=2,
+            fill_color=PANEL_FILL, fill_opacity=0.95,
+        ).move_to(LEFT * 4.5 + DOWN * 2.2)
+        pynq_txt = Text("PYNQ", font_size=16, color=ACCENT_HARDWARE,
+                        weight=BOLD).move_to(pynq_box)
+
+        ec2_box = RoundedRectangle(
+            corner_radius=0.10, width=1.8, height=0.7,
+            stroke_color=ACCENT_SERVER, stroke_width=2,
+            fill_color=PANEL_FILL, fill_opacity=0.95,
+        ).move_to(DOWN * 2.2)
+        ec2_txt = Text("EC2 Server", font_size=14, color=ACCENT_SERVER,
+                       weight=BOLD).move_to(ec2_box)
+
+        pynqs_box = RoundedRectangle(
+            corner_radius=0.10, width=2.2, height=0.7,
+            stroke_color=ACCENT_HARDWARE, stroke_width=2,
+            fill_color=PANEL_FILL, fill_opacity=0.95,
+        ).move_to(RIGHT * 4.5 + DOWN * 2.2)
+        pynqs_txt = Text("All PYNQs", font_size=14,
+                         color=ACCENT_HARDWARE,
+                         weight=BOLD).move_to(pynqs_box)
+
+        self.play(
+            FadeIn(pynq_box), FadeIn(pynq_txt),
+            FadeIn(ec2_box), FadeIn(ec2_txt),
+            FadeIn(pynqs_box), FadeIn(pynqs_txt),
+            run_time=0.4,
+        )
+
+        # Packet dot flies
+        pkt = Dot(radius=0.10, color=ACCENT_HARDWARE, z_index=15)
+        pkt_lbl = Text("24B", font_size=12, color=ACCENT_HARDWARE)
+        pkt_grp = VGroup(pkt, pkt_lbl).arrange(DOWN, buff=0.03)
+        pkt_grp.move_to(pynq_box.get_right() + RIGHT * 0.2)
+
+        arr1 = Arrow(pynq_box.get_right(), ec2_box.get_left(),
+                     buff=0.08, stroke_width=3, color=ACCENT_HARDWARE,
+                     max_tip_length_to_length_ratio=0.14)
+        arr2 = Arrow(ec2_box.get_right(), pynqs_box.get_left(),
+                     buff=0.08, stroke_width=3, color=ACCENT_SERVER,
+                     max_tip_length_to_length_ratio=0.14)
+
+        udp_lbl1 = Text("UDP", font_size=13, color=TEXT_MUTED)
+        udp_lbl1.next_to(arr1, UP, buff=0.04)
+        udp_lbl2 = Text("UDP broadcast", font_size=13, color=TEXT_MUTED)
+        udp_lbl2.next_to(arr2, UP, buff=0.04)
+
+        self.play(GrowArrow(arr1), FadeIn(udp_lbl1), run_time=0.3)
+        self.play(FadeIn(pkt_grp), run_time=0.2)
+        self.play(pkt_grp.animate.move_to(ec2_box), run_time=0.35)
+        self.play(GrowArrow(arr2), FadeIn(udp_lbl2), run_time=0.3)
+        self.play(pkt_grp.animate.move_to(pynqs_box), run_time=0.35)
+        self.play(FadeOut(pkt_grp), run_time=0.2)
+        self.wait(0.5)
+
+        # ── Why UDP callout ───────────────────────────────────────────────
+        why_box = RoundedRectangle(
+            corner_radius=0.10, width=10.0, height=1.1,
+            fill_color=PANEL_FILL, fill_opacity=0.96,
+            stroke_color=ACCENT_SERVER, stroke_width=1.5,
+        ).to_edge(DOWN, buff=0.08)
+        why_txt = VGroup(
+            Text("Why UDP?  At 30 Hz, a stale packet is useless — "
+                 "the next one has fresher data.",
+                 font_size=16, color=TEXT_PRIMARY),
+            Text("Fixed 24B frame: O(1) decode, zero parsing overhead. "
+                 "Seq number detects out-of-order / duplicates.",
+                 font_size=15, color=TEXT_MUTED),
+        ).arrange(DOWN, buff=0.06, aligned_edge=LEFT)
+        why_txt.move_to(why_box)
+        self.play(FadeIn(VGroup(why_box, why_txt)), run_time=0.5)
+        self.wait(3.0)
+
+        self.play(FadeOut(VGroup(
+            title, field_rects, field_labels, type_labels, byte_offsets,
+            cat_id, cat_time, cat_pos, cat_state,
+            code_bg, code_txt,
+            pynq_box, pynq_txt, ec2_box, ec2_txt, pynqs_box, pynqs_txt,
+            arr1, arr2, udp_lbl1, udp_lbl2,
+            why_box, why_txt,
+        )), run_time=0.8)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Map Hot-Swap — live map change mid-session
+# ═══════════════════════════════════════════════════════════════════════════
+
+class MapHotSwapScene(Scene):
+    def construct(self):
+        self.camera.background_color = BACKGROUND
+
+        title = Text("Live Map Hot-Swap", font_size=40,
+                     color=PYNQ_RED, weight=BOLD)
+        title.to_edge(UP, buff=0.35)
+        self.play(Write(title), run_time=0.8)
+
+        subtitle = Text(
+            "Change the map mid-session — no reboot, no overlay reload",
+            font_size=22, color=TEXT_MUTED,
+        )
+        subtitle.next_to(title, DOWN, buff=0.20)
+        self.play(FadeIn(subtitle, shift=UP * 0.1), run_time=0.4)
+
+        # ── Flow diagram: Monitor → Redis → Server → PKT_MAP → Boards → BRAM → HDMI
+        flow_data = [
+            ("Monitor\nEditor",      "#FF6B6B"),
+            ("Redis\nPub/Sub",       "#E02020"),
+            ("t2_game\n_tick.py",    ACCENT_SERVER),
+            ("PKT_MAP\n→ UDP",       ACCENT_HARDWARE),
+            ("pynq_\nclient.py",     ACCENT_HARDWARE),
+            ("MMIO →\nBRAM",         "#F7A541"),
+            ("PL\nRaycaster",        PYNQ_RED),
+            ("HDMI",                 PYNQ_RED),
+        ]
+
+        flow_boxes = VGroup()
+        for label, color in flow_data:
+            box = RoundedRectangle(
+                corner_radius=0.08, width=1.35, height=0.85,
+                stroke_color=color, stroke_width=1.8,
+                fill_color=PANEL_FILL, fill_opacity=0.95,
+            )
+            txt = Text(label, font_size=12, color=color, weight=BOLD)
+            txt.move_to(box)
+            flow_boxes.add(VGroup(box, txt))
+        flow_boxes.arrange(RIGHT, buff=0.20).move_to(UP * 0.6)
+        if flow_boxes.get_width() > 13.0:
+            flow_boxes.scale_to_fit_width(13.0)
+
+        flow_arrows = VGroup()
+        for i in range(len(flow_boxes) - 1):
+            flow_arrows.add(Arrow(
+                flow_boxes[i].get_right(), flow_boxes[i + 1].get_left(),
+                buff=0.04, stroke_width=2.5, color=TEXT_MUTED,
+                max_tip_length_to_length_ratio=0.18,
+            ))
+
+        self.play(
+            LaggedStart(
+                *[FadeIn(b, shift=RIGHT * 0.1) for b in flow_boxes],
+                lag_ratio=0.08,
+            ),
+            run_time=1.0,
+        )
+        self.play(FadeIn(flow_arrows, lag_ratio=0.1), run_time=0.6)
+        self.wait(0.8)
+
+        # ── Animate map morphing: old grid → new grid ─────────────────────
+        cell_s = 0.28
+        grid_n = 8  # 8x8 for visual simplicity
+
+        map_old = [
+            [1,1,1,1,1,1,1,1],
+            [1,0,0,0,0,0,0,1],
+            [1,0,1,1,0,0,0,1],
+            [1,0,1,0,0,1,0,1],
+            [1,0,0,0,0,1,0,1],
+            [1,0,0,0,0,0,0,1],
+            [1,0,0,1,0,0,0,1],
+            [1,1,1,1,1,1,1,1],
+        ]
+
+        map_new = [
+            [1,1,1,1,1,1,1,1],
+            [1,0,0,0,0,0,0,1],
+            [1,0,0,0,0,1,0,1],
+            [1,0,0,1,0,1,0,1],
+            [1,0,0,1,0,0,0,1],
+            [1,0,0,0,0,0,1,1],
+            [1,0,0,0,0,0,0,1],
+            [1,1,1,1,1,1,1,1],
+        ]
+
+        grid_cx = -3.0
+        grid_cy = -1.8
+
+        def build_grid(world_map, cx, cy, opacity=0.9):
+            g = VGroup()
+            for r in range(grid_n):
+                for c in range(grid_n):
+                    sq = Square(side_length=cell_s, stroke_width=0.6,
+                                stroke_color=GRID_COLOR)
+                    if world_map[r][c]:
+                        sq.set_fill(WALL_COLOR, opacity=opacity)
+                    else:
+                        sq.set_fill(EMPTY_COLOR, opacity=0.3)
+                    sq.move_to([
+                        cx + (c - grid_n / 2 + 0.5) * cell_s,
+                        cy + (grid_n / 2 - r - 0.5) * cell_s,
+                        0,
+                    ])
+                    g.add(sq)
+            return g
+
+        old_grid = build_grid(map_old, grid_cx, grid_cy)
+        old_lbl = Text("Current Map", font_size=18, color=TEXT_MUTED)
+        old_lbl.next_to(old_grid, UP, buff=0.15)
+
+        self.play(FadeIn(old_grid, lag_ratio=0.005), FadeIn(old_lbl),
+                  run_time=0.6)
+        self.wait(0.5)
+
+        # PKT_MAP packet flying from flow to grid
+        pkt_dot = Dot(radius=0.08, color=ACCENT_HARDWARE, z_index=15)
+        pkt_label = Text("PKT_MAP", font_size=11, color=ACCENT_HARDWARE)
+        pkt_g = VGroup(pkt_dot, pkt_label).arrange(DOWN, buff=0.03)
+        pkt_g.move_to(flow_boxes[3])
+
+        self.play(FadeIn(pkt_g, scale=0.5), run_time=0.2)
+        self.play(pkt_g.animate.move_to(old_grid.get_center() + UP * 0.5),
+                  run_time=0.5)
+        self.play(FadeOut(pkt_g), run_time=0.2)
+
+        # Morph old grid to new grid
+        new_grid = build_grid(map_new, grid_cx, grid_cy)
+        new_lbl = Text("New Map — live!", font_size=18,
+                        color=HIT_COLOR, weight=BOLD)
+        new_lbl.next_to(new_grid, UP, buff=0.15)
+
+        self.play(
+            *[Transform(old_grid[i], new_grid[i])
+              for i in range(len(old_grid))],
+            Transform(old_lbl, new_lbl),
+            run_time=1.0,
+        )
+        self.wait(0.5)
+
+        # Show the same thing on a second "board" to show broadcast
+        grid2_cx = 3.0
+        new_grid2 = build_grid(map_new, grid2_cx, grid_cy)
+        board2_lbl = Text("Board B — same map", font_size=18,
+                          color=HIT_COLOR)
+        board2_lbl.next_to(new_grid2, UP, buff=0.15)
+
+        self.play(FadeIn(new_grid2, lag_ratio=0.005),
+                  FadeIn(board2_lbl), run_time=0.6)
+        self.wait(0.5)
+
+        # ── Packet details callout ────────────────────────────────────────
+        detail_box = RoundedRectangle(
+            corner_radius=0.10, width=12.5, height=1.2,
+            fill_color=PANEL_FILL, fill_opacity=0.96,
+            stroke_color=ACCENT_SERVER, stroke_width=1.5,
+        ).to_edge(DOWN, buff=0.08)
+        detail_txt = VGroup(
+            Text("PKT_MAP: 8B header + 128B payload "
+                 "(32×32 grid, 1 bit per cell, row-major)",
+                 font_size=16, color=TEXT_PRIMARY),
+            Text("BRAM write is immediate — PL raycaster sees "
+                 "the new map on the very next frame",
+                 font_size=15, color=TEXT_MUTED),
+            Text("Broadcast to ALL boards simultaneously — "
+                 "everyone sees the same walls at the same time",
+                 font_size=15, color=HIT_COLOR),
+        ).arrange(DOWN, buff=0.06, aligned_edge=LEFT)
+        detail_txt.move_to(detail_box)
+        self.play(FadeIn(VGroup(detail_box, detail_txt)), run_time=0.5)
+        self.wait(3.0)
+
+        self.play(FadeOut(VGroup(
+            title, subtitle,
+            flow_boxes, flow_arrows,
+            old_grid, old_lbl, new_grid2, board2_lbl,
+            detail_box, detail_txt,
+        )), run_time=0.8)
+
+
+class PipelineScene(Scene):
     def construct(self):
         self.camera.background_color = BACKGROUND
 

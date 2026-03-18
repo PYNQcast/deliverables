@@ -12,10 +12,16 @@ DEFAULT_SCENES=(
   "DDAScene"
   "WallRenderScene"
   "FPGAParallelScene"
+  "MultiplayerScene"
   "MultiNodeScene"
-  "PipelineScene"
   "ServerHardwareSegment"
+  "SEDADeepDiveScene"
+  "PacketProtocolScene"
+  "StorageTieringScene"
+  "T4BatchingScene"
+  "MapHotSwapScene"
   "ServerHardwareClosingCard"
+  "PipelineScene"
 )
 
 if ! command -v ffmpeg >/dev/null 2>&1; then
