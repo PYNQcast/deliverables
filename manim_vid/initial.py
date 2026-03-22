@@ -1874,8 +1874,10 @@ class ServerHardwareSegment(Scene):
 
         storage_caption = Text(
             "Replay, metadata, and post-match processing stay off the hot path.",
-            font_size=21, color=TEXT_MUTED,
-        ).next_to(storage_row, DOWN, buff=0.18)
+            font_size=19, color=TEXT_MUTED,
+        ).next_to(storage_row, DOWN, buff=0.12)
+        if storage_caption.get_bottom()[1] < -3.8:
+            storage_caption.to_edge(DOWN, buff=0.12)
 
         self.play(FadeIn(title_group, shift=DOWN * 0.2), Create(top_divider))
         self.play(
