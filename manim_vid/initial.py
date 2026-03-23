@@ -628,17 +628,18 @@ class DDAScene(Scene):
 
         # ── FPGA callout — why DDA is perfect for hardware ────────────────
         fpga_box_bg = RoundedRectangle(
-            corner_radius=0.12, width=12.0, height=1.3,
+            corner_radius=0.12, width=12.0, height=1.6,
             fill_color=PANEL_FILL, fill_opacity=0.96,
             stroke_color=ACCENT_HARDWARE, stroke_width=1.8,
-        ).to_edge(DOWN, buff=0.15)
+        ).to_edge(DOWN, buff=0.10)
         fpga_txt = VGroup(
             Text("Why DDA maps perfectly to FPGA:", font_size=20,
                  color=ACCENT_HARDWARE, weight=BOLD),
-            Text("Only additions and comparisons — no multiply/divide."
-                 "  Each ray is independent — trivially parallelisable.",
-                 font_size=17, color=TEXT_MUTED),
-        ).arrange(DOWN, buff=0.06, aligned_edge=LEFT)
+            Text("Custom fixed-point precision minimises utilisation and latency.",
+                 font_size=16, color=TEXT_MUTED),
+            Text("Each ray is independent — trivially parallelisable.",
+                 font_size=16, color=TEXT_MUTED),
+        ).arrange(DOWN, buff=0.08, aligned_edge=LEFT)
         fpga_txt.move_to(fpga_box_bg)
         self.play(FadeIn(VGroup(fpga_box_bg, fpga_txt)), run_time=0.5)
         self.wait(2.5)
@@ -770,8 +771,7 @@ class WallRenderScene(Scene):
             line_h = min(scr_h1 - 0.05, scr_h1 * perp_dist_1 / euc_d)
             ceil_h = max(0.0, (scr_h1 - line_h) / 2)
             col_x = scr_cx1 - scr_w1 / 2 + (i + 0.5) * col_w1
-            shade = interpolate_color(ManimColor(WALL_COLOR_DARK),
-                                      ManimColor(WALL_COLOR), 0.5)
+            shade = interpolate_color(ManimColor(WALL_COLOR_DARK), ManimColor(WALL_COLOR), 0.5)
             wrect = Rectangle(width=col_w1 - 0.04, height=line_h,
                               fill_color=shade, fill_opacity=0.92,
                               stroke_width=0).move_to([col_x, scr_cy1, 0])
@@ -912,8 +912,7 @@ class WallRenderScene(Scene):
             line_h = scr_h2 * 0.75
             ceil_h = max(0.0, (scr_h2 - line_h) / 2)
             col_x = scr_cx2 - scr_w2 / 2 + (i + 0.5) * col_w2
-            shade = interpolate_color(ManimColor(WALL_COLOR_DARK),
-                                      ManimColor(WALL_COLOR), 0.5)
+            shade = interpolate_color(ManimColor(WALL_COLOR_DARK), ManimColor(WALL_COLOR), 0.5)
             wrect = Rectangle(width=col_w2 - 0.04, height=line_h,
                               fill_color=shade, fill_opacity=0.92,
                               stroke_width=0).move_to([col_x, scr_cy2, 0])
@@ -1391,7 +1390,7 @@ class FPGAParallelScene(Scene):
         )
 
         # Brief note
-        par_note = Text("Each ray is independent — all 320 columns "
+        par_note = Text("Each ray is independent — all 720 columns "
                         "can be computed in parallel",
                         font_size=20, color=TEXT_MUTED)
         par_note.to_edge(DOWN, buff=0.5)
@@ -1614,10 +1613,10 @@ class FPGAParallelScene(Scene):
             Text("t_col  = ray_steps_max / f_clk  "
                  "= 64 / 100 MHz  = 0.64 μs",
                  font_size=20, color=TEXT_PRIMARY),
-            Text("t_frame = 320 × 0.64 μs  ≈  205 μs",
+            Text("t_frame = 720 × 0.64 μs  ≈  461 μs",
                  font_size=20, color=TEXT_PRIMARY),
             Text("Budget for 60 fps  =  16.7 ms  "
-                 "→  81× headroom",
+                 "→  36× headroom",
                  font_size=20, color=HIT_COLOR, weight=BOLD),
         ).arrange(DOWN, buff=0.14, aligned_edge=LEFT)
 
@@ -1768,6 +1767,243 @@ class MultiplayerScene(Scene):
             proj_title, screen, ceiling, floor_r,
             wall_cols, sprite_col, sprite_label, annot,
         )), run_time=0.9)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Sprite & Texture Rendering Pipeline
+# ═══════════════════════════════════════════════════════════════════════════
+
+class SpriteTexturingScene(Scene):
+    def construct(self):
+        self.camera.background_color = BACKGROUND
+
+        title = Text("Sprite & Texture Rendering", font_size=40,
+                     color=PYNQ_RED, weight=BOLD)
+        title.to_edge(UP, buff=0.35)
+        self.play(Write(title), run_time=0.8)
+
+        # ==================================================================
+        # PART 1 — Sprite rendering pipeline (5 stages)
+        # ==================================================================
+        part1_hdr = Text("Sprite Rendering Pipeline", font_size=28,
+                         color=TEXT_PRIMARY, weight=BOLD)
+        part1_hdr.move_to(ORIGIN)
+        self.play(FadeIn(part1_hdr, shift=UP * 0.15), run_time=0.5)
+        self.wait(1.0)
+        self.play(FadeOut(part1_hdr), run_time=0.4)
+
+        # ── 5-stage pipeline boxes ────────────────────────────────────────
+        stages = [
+            ("1. Z-Buffer\nRecord",
+             "Store perpendicular wall\ndist per column during\nwall pass"),
+            ("2. Camera\nProjection",
+             "Subtract player pos,\nmultiply by inverse\ncamera matrix"),
+            ("3. Screen\nDimensions",
+             "spriteHeight =\nk / perpDist\n(same as walls)"),
+            ("4. Column\nRendering",
+             "Render column by column,\nskip if occluded\nby Z-buffer"),
+            ("5. Transparency\nMask",
+             "Colour-key check\nper pixel — avoids\nsolid rectangles"),
+        ]
+
+        stage_colors = [PYNQ_RED, ACCENT_SERVER, ACCENT_HARDWARE,
+                        HIT_COLOR, "#BB66FF"]
+
+        stage_boxes = VGroup()
+        for (label, desc), color in zip(stages, stage_colors):
+            box = RoundedRectangle(
+                corner_radius=0.10, width=2.3, height=2.0,
+                stroke_color=color, stroke_width=2,
+                fill_color=PANEL_FILL, fill_opacity=0.95,
+            )
+            t = Text(label, font_size=14, color=color, weight=BOLD)
+            d = Text(desc, font_size=11, color=TEXT_MUTED)
+            VGroup(t, d).arrange(DOWN, buff=0.12).move_to(box)
+            stage_boxes.add(VGroup(box, t, d))
+
+        stage_boxes.arrange(RIGHT, buff=0.25).move_to(UP * 0.5)
+        if stage_boxes.get_width() > 13.0:
+            stage_boxes.scale_to_fit_width(13.0)
+
+        stage_arrows = VGroup()
+        for i in range(len(stage_boxes) - 1):
+            stage_arrows.add(Arrow(
+                stage_boxes[i].get_right(), stage_boxes[i + 1].get_left(),
+                buff=0.04, stroke_width=2.5, color=TEXT_MUTED,
+                max_tip_length_to_length_ratio=0.18,
+            ))
+
+        self.play(
+            LaggedStart(
+                *[FadeIn(b, shift=RIGHT * 0.12) for b in stage_boxes],
+                lag_ratio=0.10,
+            ),
+            run_time=1.0,
+        )
+        self.play(FadeIn(stage_arrows, lag_ratio=0.12), run_time=0.5)
+        self.wait(1.0)
+
+        # ── Key detail: runs in parallel with wall raycasting ─────────────
+        sprite_note = VGroup(
+            Text("Sprite casting runs in parallel with wall raycasting",
+                 font_size=18, color=TEXT_PRIMARY, weight=BOLD),
+            Text("Uses a longer window — multi-cycle dividers allowed "
+                 "without impacting throughput",
+                 font_size=16, color=TEXT_MUTED),
+        ).arrange(DOWN, buff=0.06, aligned_edge=LEFT)
+        sn_bg = RoundedRectangle(
+            corner_radius=0.10,
+            width=sprite_note.width + 0.5,
+            height=sprite_note.height + 0.3,
+            fill_color=PANEL_FILL, fill_opacity=0.96,
+            stroke_color=ACCENT_HARDWARE, stroke_width=1.5,
+        )
+        sn_bg.to_edge(DOWN, buff=0.12)
+        sprite_note.move_to(sn_bg)
+        self.play(FadeIn(VGroup(sn_bg, sprite_note)), run_time=0.5)
+        self.wait(2.5)
+
+        self.play(FadeOut(VGroup(
+            stage_boxes, stage_arrows, sn_bg, sprite_note,
+        )), run_time=0.6)
+
+        # ==================================================================
+        # PART 2 — Texture rendering: how wall textures are looked up
+        # ==================================================================
+        part2_hdr = Text("Wall Texture Mapping", font_size=28,
+                         color=TEXT_PRIMARY, weight=BOLD)
+        part2_hdr.move_to(ORIGIN)
+        self.play(FadeIn(part2_hdr, shift=UP * 0.15), run_time=0.5)
+        self.wait(1.0)
+        self.play(FadeOut(part2_hdr), run_time=0.4)
+
+        # ── Left side: how X and Y texture coords are derived ─────────────
+        tex_steps = VGroup(
+            Text("Texture coordinate lookup:", font_size=22,
+                 color=TEXT_PRIMARY, weight=BOLD),
+            Text("X position: recorded at end of DDA stepping",
+                 font_size=18, color=ACCENT_SERVER),
+            Text("    → which column within the wall tile",
+                 font_size=16, color=TEXT_MUTED),
+            Text("Y position: reciprocal LUT on perpWallDist",
+                 font_size=18, color=ACCENT_HARDWARE),
+            Text("    → fractional depth within the wall column",
+                 font_size=16, color=TEXT_MUTED),
+            Text("Together they index a 32×32 12-bit RGB bitmap",
+                 font_size=18, color=HIT_COLOR),
+            Text("    stored at reduced bit-width, zero-extended to 24-bit",
+                 font_size=16, color=TEXT_MUTED),
+        ).arrange(DOWN, buff=0.14, aligned_edge=LEFT)
+        tex_steps.move_to(LEFT * 2.5 + UP * 0.0)
+        if tex_steps.get_height() > 4.5:
+            tex_steps.scale_to_fit_height(4.5)
+
+        self.play(FadeIn(tex_steps, lag_ratio=0.06), run_time=1.2)
+        self.wait(1.0)
+
+        # ── Right side: simplified texture grid ───────────────────────────
+        tex_size = 8  # visual 8x8 grid representing 32x32 texture
+        tex_cs = 0.28
+        tex_cx = 4.0
+        tex_cy = 0.3
+
+        tex_grid = VGroup()
+        for r in range(tex_size):
+            for c in range(tex_size):
+                # Create a colourful pattern to look like a texture
+                hue = (r * tex_size + c) / (tex_size * tex_size)
+                # Use warm browns/reds for a brick-like feel
+                r_val = 0.4 + 0.4 * np.sin(hue * 6.28 + 0.0)
+                g_val = 0.2 + 0.2 * np.sin(hue * 6.28 + 2.1)
+                b_val = 0.1 + 0.1 * np.sin(hue * 6.28 + 4.2)
+                color_hex = f"#{int(r_val*255):02x}{int(g_val*255):02x}{int(b_val*255):02x}"
+
+                sq = Square(side_length=tex_cs, stroke_width=0.3,
+                            stroke_color="#333333")
+                sq.set_fill(color_hex, opacity=0.9)
+                sq.move_to([
+                    tex_cx + (c - tex_size / 2 + 0.5) * tex_cs,
+                    tex_cy + (tex_size / 2 - r - 0.5) * tex_cs,
+                    0,
+                ])
+                tex_grid.add(sq)
+
+        tex_label = Text("32×32 texture bitmap", font_size=16,
+                         color=TEXT_MUTED)
+        tex_label.next_to(tex_grid, DOWN, buff=0.15)
+        tex_format = Text("12-bit RGB per texel", font_size=14,
+                          color=TEXT_DIM)
+        tex_format.next_to(tex_label, DOWN, buff=0.06)
+
+        self.play(FadeIn(tex_grid, lag_ratio=0.005), run_time=0.6)
+        self.play(FadeIn(tex_label), FadeIn(tex_format), run_time=0.4)
+
+        # Highlight a single texel
+        highlight_r, highlight_c = 3, 5
+        highlight_idx = highlight_r * tex_size + highlight_c
+        highlight_sq = SurroundingRectangle(
+            tex_grid[highlight_idx], color=HIT_COLOR, buff=0.02,
+            stroke_width=2.5,
+        )
+        coord_lbl = Text(f"(X={highlight_c}, Y={highlight_r})",
+                         font_size=14, color=HIT_COLOR)
+        coord_lbl.next_to(highlight_sq, UP + RIGHT, buff=0.08)
+        self.play(Create(highlight_sq), FadeIn(coord_lbl), run_time=0.5)
+        self.wait(1.5)
+
+        # ── LUT callout at the bottom ─────────────────────────────────────
+        lut_callout = VGroup(
+            Text("LUT Design Tradeoffs:", font_size=18,
+                 color=ACCENT_HARDWARE, weight=BOLD),
+            Text("Single-cycle access (vs multi-cycle DSP dividers) · "
+                 "Preserves DSP slices for future compute",
+                 font_size=15, color=TEXT_MUTED),
+            Text("LUT addressing allows independent tuning of "
+                 "input/output precision per table",
+                 font_size=15, color=TEXT_MUTED),
+        ).arrange(DOWN, buff=0.06, aligned_edge=LEFT)
+        lut_bg = RoundedRectangle(
+            corner_radius=0.10,
+            width=lut_callout.width + 0.5,
+            height=lut_callout.height + 0.3,
+            fill_color=PANEL_FILL, fill_opacity=0.96,
+            stroke_color=ACCENT_HARDWARE, stroke_width=1.5,
+        )
+        lut_bg.to_edge(DOWN, buff=0.08)
+        lut_callout.move_to(lut_bg)
+        self.play(FadeIn(VGroup(lut_bg, lut_callout)), run_time=0.5)
+        self.wait(3.0)
+
+        # ── Sprite format note ────────────────────────────────────────────
+        self.play(FadeOut(VGroup(lut_bg, lut_callout)), run_time=0.3)
+
+        sprite_fmt = VGroup(
+            Text("Sprites: 16×16 12-bit RGB bitmaps", font_size=20,
+                 color="#BB66FF", weight=BOLD),
+            Text("Transparency mask enables non-rectangular shapes "
+                 "(e.g. Pac-Man ghosts)",
+                 font_size=17, color=TEXT_MUTED),
+            Text("Fully customisable — swap .mem files for any texture",
+                 font_size=17, color=TEXT_MUTED),
+        ).arrange(DOWN, buff=0.08, aligned_edge=LEFT)
+        sf_bg = RoundedRectangle(
+            corner_radius=0.10,
+            width=sprite_fmt.width + 0.5,
+            height=sprite_fmt.height + 0.3,
+            fill_color=PANEL_FILL, fill_opacity=0.96,
+            stroke_color="#BB66FF", stroke_width=1.5,
+        )
+        sf_bg.to_edge(DOWN, buff=0.08)
+        sprite_fmt.move_to(sf_bg)
+        self.play(FadeIn(VGroup(sf_bg, sprite_fmt)), run_time=0.5)
+        self.wait(2.5)
+
+        self.play(FadeOut(VGroup(
+            title, tex_steps,
+            tex_grid, tex_label, tex_format,
+            highlight_sq, coord_lbl,
+            sf_bg, sprite_fmt,
+        )), run_time=0.8)
 
 
 class MultiNodeScene(Scene):
